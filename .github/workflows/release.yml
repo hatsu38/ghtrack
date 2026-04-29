@@ -1,0 +1,46 @@
+name: Release
+
+# Release Drafter が作成したドラフトを GitHub UI で publish したら起動。
+# v1.2.3 のようなセマンティックタグから major タグ (v1) を最新に動かす。
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  update-major-tag:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract major version from tag
+        id: extract
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # v1.2.3 → v1 / 1.2.3 → v1
+          if [[ ! "$TAG" =~ ^v?([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid semver tag (expected vX.Y.Z)."
+            exit 1
+          fi
+          MAJOR="v${BASH_REMATCH[1]}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "Will move $MAJOR to point at $TAG"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.extract.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Move major tag
+        env:
+          MAJOR: ${{ steps.extract.outputs.major }}
+          TAG: ${{ steps.extract.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -f "$MAJOR" "$TAG"
+          git push -f origin "refs/tags/$MAJOR"

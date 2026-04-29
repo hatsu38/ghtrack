@@ -1,0 +1,25 @@
+name: Release Drafter
+
+on:
+  push:
+    branches: [main]
+  # PR の title / branch / files から autolabeler を効かせるために必要
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    permissions:
+      # release を作成・更新するため
+      contents: write
+      # autolabeler が PR にラベルを付けるため
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
