@@ -1755,6 +1755,141 @@
           ]
         }
       ]
+    },
+    {
+      "schema_version": 1,
+      "commit": "bd1ea69166f5ec0007db7a8012a08740a2f4e63e",
+      "branch": "fix/asset-path",
+      "event": "pull_request",
+      "date": 1777477325252,
+      "workflow": "test",
+      "workflow_file": "test.yml",
+      "run_id": 25118662971,
+      "run_attempt": 1,
+      "total_duration_sec": 24,
+      "jobs": [
+        {
+          "name": "build",
+          "duration_sec": 24,
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "number": 1,
+              "duration_sec": 3,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v6",
+              "number": 2,
+              "duration_sec": 1,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v6",
+              "number": 3,
+              "duration_sec": 5,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pnpm/action-setup@v6",
+              "number": 4,
+              "duration_sec": 1,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pnpm install --frozen-lockfile",
+              "number": 5,
+              "duration_sec": 3,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pnpm typecheck",
+              "number": 6,
+              "duration_sec": 2,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Verify dist/ is up to date",
+              "number": 7,
+              "duration_sec": 6,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run pnpm/action-setup@v6",
+              "number": 12,
+              "duration_sec": 0,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v6",
+              "number": 13,
+              "duration_sec": 0,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v6",
+              "number": 14,
+              "duration_sec": 0,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "number": 15,
+              "duration_sec": 0,
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "name": "track",
+          "duration_sec": null,
+          "status": "in_progress",
+          "conclusion": null,
+          "steps": [
+            {
+              "name": "Set up job",
+              "number": 1,
+              "duration_sec": 1,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v6",
+              "number": 2,
+              "duration_sec": 0,
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ghtrack against this run",
+              "number": 3,
+              "duration_sec": null,
+              "status": "in_progress",
+              "conclusion": null
+            },
+            {
+              "name": "Post Run actions/checkout@v6",
+              "number": 6,
+              "duration_sec": null,
+              "status": "pending",
+              "conclusion": null
+            }
+          ]
+        }
+      ]
     }
   ]
 }
