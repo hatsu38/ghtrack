@@ -1,0 +1,36 @@
+{
+  "name": "ghtrack",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Track GitHub Actions workflow run durations over time on gh-pages.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hatsu38/ghtrack.git"
+  },
+  "keywords": [
+    "github-actions",
+    "benchmark",
+    "duration",
+    "workflow"
+  ],
+  "author": "hatsu38",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vercel/ncc": "^0.38.3",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.28.2"
+}

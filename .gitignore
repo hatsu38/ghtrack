@@ -1,0 +1,14 @@
+node_modules/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 補足: dist/ は GitHub Actions のランタイムで使うバンドルなので
+# .gitignore に追加せず、リポジトリに commit する。
