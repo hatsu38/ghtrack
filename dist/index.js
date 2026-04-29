@@ -30369,11 +30369,25 @@ async function ensureIndexHtml(args) {
     core.info(`${remoteSha === null ? "Added" : "Updated"} index.html on ${args.inputs.ghPagesBranch} (new sha=${localBlobSha.slice(0, 7)}).`);
 }
 async function loadBundledIndexHtml() {
-    // GitHub Actions runtime では GITHUB_ACTION_PATH が action のチェックアウトを指す。
-    // ローカル(`uses: ./`)でも同じく resolve される。テストや手元実行では cwd にフォールバック。
-    const baseDir = process.env.GITHUB_ACTION_PATH ?? process.cwd();
-    const filePath = path.join(baseDir, INDEX_HTML_LOCAL_PATH);
-    return await fs.readFile(filePath);
+    // 利用側 repo から `uses: hatsu38/ghtrack@vX.Y.Z` で呼ばれた時、
+    // GITHUB_ACTION_PATH は composite action 用の env で Node.js Action では未定義のことがある。
+    // ncc バンドル後の __dirname は <action-checkout>/dist/ を指すため、`..` で action repo
+    // のルートに上がって assets/index.html を読む。GITHUB_ACTION_PATH が定義されていれば優先。
+    const candidates = [];
+    if (process.env.GITHUB_ACTION_PATH) {
+        candidates.push(path.join(process.env.GITHUB_ACTION_PATH, INDEX_HTML_LOCAL_PATH));
+    }
+    candidates.push(path.join(__dirname, "..", INDEX_HTML_LOCAL_PATH));
+    for (const filePath of candidates) {
+        try {
+            return await fs.readFile(filePath);
+        }
+        catch (err) {
+            if (err.code !== "ENOENT")
+                throw err;
+        }
+    }
+    throw new Error(`assets/index.html not found. Tried: ${candidates.join(", ")}`);
 }
 function computeGitBlobSha(content) {
     // git の blob hash は sha1("blob " + size + "\0" + content)。Contents API が返す sha と一致するため、
