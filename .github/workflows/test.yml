@@ -42,6 +42,10 @@ jobs:
   track:
     needs: build
     runs-on: ubuntu-latest
+    # gh-pages branch への push に必要(他 job は read で十分)
+    permissions:
+      contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v6
       - name: Run ghtrack against this run
