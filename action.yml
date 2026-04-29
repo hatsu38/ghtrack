@@ -8,9 +8,46 @@ branding:
 
 inputs:
   github-token:
-    description: GitHub token used to read workflow run / job data via the REST API.
+    description: >-
+      GitHub token used to read workflow run / job data and to push the appended
+      JSON to the gh-pages branch. Default uses the workflow's GITHUB_TOKEN.
+      The token must have `contents: write` permission to push.
     required: false
     default: ${{ github.token }}
+  gh-pages-branch:
+    description: Branch to which the duration JSON is appended.
+    required: false
+    default: gh-pages
+  data-file-path:
+    description: Path of the JSON file inside the gh-pages branch.
+    required: false
+    default: data/data.json
+  auto-push:
+    description: >-
+      Whether to push the appended JSON. When false, only collect the entry and
+      log it; nothing is written to the gh-pages branch. Default true.
+    required: false
+    default: "true"
+  auto-create-branch:
+    description: >-
+      When the gh-pages branch does not exist on first run, create it as an
+      orphan branch and seed it with the first entry. Default true. Disable if
+      you want explicit failures until the branch exists.
+    required: false
+    default: "true"
+  max-items-in-history:
+    description: >-
+      If set to a positive integer, the entries array is truncated from the
+      head so that only the last N entries are retained. Useful to stay below
+      the GitHub Contents API 1MB-per-file limit.
+    required: false
+  skip-fork-pr:
+    description: >-
+      Skip pushing when the workflow runs on a pull_request from a forked
+      repository (the GITHUB_TOKEN cannot push to the base repo in that case).
+      Entries are still collected and logged. Default true.
+    required: false
+    default: "true"
 
 runs:
   using: node24
