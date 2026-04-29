@@ -6,7 +6,7 @@ GitHub Actions の各 workflow run の実行時間を、走るたびに `gh-page
 
 ## ステータス
 
-**v0.1.0 プロトタイプ**: workflow run の job / step duration を取得し、`gh-pages` branch の `data/data.json` に append できる。チャート可視化は次のリリースで対応予定(現状は生 JSON のみ)。
+**v0.1.0 プロトタイプ**: workflow run の job / step duration を取得して `gh-pages` branch の `data/data.json` に append し、合わせて Chart.js 製の `index.html` を同 branch の root に同梱する。リポジトリの GitHub Pages を有効化すれば、ブラウザで時系列グラフが見える。
 
 ## 使い方
 
@@ -90,6 +90,25 @@ jobs:
 ```
 
 `duration_sec` が `null` のステップは未完了(自分自身を観測する都合で、`track` ジョブの最終 step は常に未完了として記録される)。
+
+## 可視化(GitHub Pages)
+
+Action は実行のたびに `gh-pages` branch の root に `index.html` を同梱(差分があれば自動同期)する。Chart.js v4 + date-fns adapter を CDN(jsDelivr)から読み込み、`fetch('./data/data.json')` でデータを取って 2 つの時系列グラフを描く構成:
+
+- **Total duration per run**: 各 run の `total_duration_sec` を点で並べた折れ線
+- **Per-job duration**: 各 job 名ごとに別 dataset を並べた折れ線
+
+ライト/ダークは `prefers-color-scheme` で自動切り替え。viewport meta + max-width 960px のレスポンシブ。
+
+### 公開手順
+
+1. リポジトリを **public** にする(または GitHub Pro 以上のプランで Pages を有効化)
+2. **Settings → Pages** で:
+   - Source: **Deploy from a branch**
+   - Branch: **`gh-pages`** / **`/`(root)**
+3. 数分後、`https://<owner>.github.io/<repo>/` でグラフが見える
+
+データだけ確認したい場合は `https://<owner>.github.io/<repo>/data/data.json` を直接開いても良い。
 
 ## 必要な permissions と注意事項
 
