@@ -30225,6 +30225,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.writeEntryToGhPages = writeEntryToGhPages;
 const core = __importStar(__nccwpck_require__(6966));
+const crypto = __importStar(__nccwpck_require__(7598));
+const fs = __importStar(__nccwpck_require__(1455));
+const path = __importStar(__nccwpck_require__(6760));
 const types_1 = __nccwpck_require__(7715);
 const COMMITTER = {
     name: "github-actions[bot]",
@@ -30232,6 +30235,9 @@ const COMMITTER = {
 };
 const MAX_PUSH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 500;
+// 利用者から見える HTML エントリポイントのパス。gh-pages の root に置く。
+const INDEX_HTML_REMOTE_PATH = "index.html";
+const INDEX_HTML_LOCAL_PATH = "assets/index.html";
 async function writeEntryToGhPages(args) {
     const branchExists = await branchExistsOnRemote(args);
     if (!branchExists) {
@@ -30244,6 +30250,7 @@ async function writeEntryToGhPages(args) {
         // race condition: branch was concurrently created → fall through to update flow
     }
     await appendWithRetry(args);
+    await ensureIndexHtml(args);
 }
 async function branchExistsOnRemote(args) {
     try {
@@ -30262,12 +30269,21 @@ async function branchExistsOnRemote(args) {
 }
 async function bootstrapBranch(args) {
     const initial = appendEntry((0, types_1.emptyDataFile)(), args.entry, args.inputs.maxItemsInHistory);
-    const blob = await args.octokit.rest.git.createBlob({
-        owner: args.owner,
-        repo: args.repo,
-        content: Buffer.from(serializeDataFile(initial), "utf-8").toString("base64"),
-        encoding: "base64",
-    });
+    const indexHtml = await loadBundledIndexHtml();
+    const [dataBlob, htmlBlob] = await Promise.all([
+        args.octokit.rest.git.createBlob({
+            owner: args.owner,
+            repo: args.repo,
+            content: Buffer.from(serializeDataFile(initial), "utf-8").toString("base64"),
+            encoding: "base64",
+        }),
+        args.octokit.rest.git.createBlob({
+            owner: args.owner,
+            repo: args.repo,
+            content: indexHtml.toString("base64"),
+            encoding: "base64",
+        }),
+    ]);
     const tree = await args.octokit.rest.git.createTree({
         owner: args.owner,
         repo: args.repo,
@@ -30276,14 +30292,20 @@ async function bootstrapBranch(args) {
                 path: args.inputs.dataFilePath,
                 mode: "100644",
                 type: "blob",
-                sha: blob.data.sha,
+                sha: dataBlob.data.sha,
+            },
+            {
+                path: INDEX_HTML_REMOTE_PATH,
+                mode: "100644",
+                type: "blob",
+                sha: htmlBlob.data.sha,
             },
         ],
     });
     const commit = await args.octokit.rest.git.createCommit({
         owner: args.owner,
         repo: args.repo,
-        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry`,
+        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry and index.html`,
         tree: tree.data.sha,
         parents: [], // orphan commit — gh-pages を main 履歴と分離する
         author: COMMITTER,
@@ -30307,6 +30329,57 @@ async function bootstrapBranch(args) {
         }
         throw err;
     }
+}
+async function ensureIndexHtml(args) {
+    const html = await loadBundledIndexHtml();
+    const localBlobSha = computeGitBlobSha(html);
+    let remoteSha = null;
+    try {
+        const res = await args.octokit.rest.repos.getContent({
+            owner: args.owner,
+            repo: args.repo,
+            path: INDEX_HTML_REMOTE_PATH,
+            ref: args.inputs.ghPagesBranch,
+        });
+        if (!Array.isArray(res.data) && res.data.type === "file") {
+            remoteSha = res.data.sha;
+        }
+    }
+    catch (err) {
+        if (errorStatus(err) !== 404)
+            throw err;
+    }
+    if (remoteSha === localBlobSha) {
+        core.info(`index.html is up to date on ${args.inputs.ghPagesBranch} (sha=${localBlobSha.slice(0, 7)}).`);
+        return;
+    }
+    await args.octokit.rest.repos.createOrUpdateFileContents({
+        owner: args.owner,
+        repo: args.repo,
+        path: INDEX_HTML_REMOTE_PATH,
+        branch: args.inputs.ghPagesBranch,
+        message: remoteSha === null
+            ? `chore(ghtrack): add index.html to ${args.inputs.ghPagesBranch}`
+            : `chore(ghtrack): sync index.html on ${args.inputs.ghPagesBranch}`,
+        content: html.toString("base64"),
+        sha: remoteSha ?? undefined,
+        author: COMMITTER,
+        committer: COMMITTER,
+    });
+    core.info(`${remoteSha === null ? "Added" : "Updated"} index.html on ${args.inputs.ghPagesBranch} (new sha=${localBlobSha.slice(0, 7)}).`);
+}
+async function loadBundledIndexHtml() {
+    // GitHub Actions runtime では GITHUB_ACTION_PATH が action のチェックアウトを指す。
+    // ローカル(`uses: ./`)でも同じく resolve される。テストや手元実行では cwd にフォールバック。
+    const baseDir = process.env.GITHUB_ACTION_PATH ?? process.cwd();
+    const filePath = path.join(baseDir, INDEX_HTML_LOCAL_PATH);
+    return await fs.readFile(filePath);
+}
+function computeGitBlobSha(content) {
+    // git の blob hash は sha1("blob " + size + "\0" + content)。Contents API が返す sha と一致するため、
+    // ローカルでハッシュを計算してリモートとの差分を 0 API call で判定できる。
+    const header = Buffer.from(`blob ${content.length}\0`, "utf-8");
+    return crypto.createHash("sha1").update(header).update(content).digest("hex");
 }
 async function appendWithRetry(args) {
     let lastError;
@@ -30557,6 +30630,22 @@ module.exports = require("node:crypto");
 
 "use strict";
 module.exports = require("node:events");
+
+/***/ }),
+
+/***/ 1455:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:fs/promises");
+
+/***/ }),
+
+/***/ 6760:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:path");
 
 /***/ }),
 
