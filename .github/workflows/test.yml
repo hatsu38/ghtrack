@@ -9,19 +9,22 @@ permissions:
   contents: read
   actions: read
 
+env:
+  # pnpm/action-setup が Node.js 20 ベースで動いているため、Node 24 を強制する
+  # (2026-06-02 以降は default が Node 24 になる予定だが、それまでの暫定対応)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .node-version
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - run: pnpm install --frozen-lockfile
 
@@ -40,6 +43,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Run ghtrack against this run
         uses: ./
