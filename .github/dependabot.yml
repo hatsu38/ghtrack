@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # npm(pnpm-lock.yaml も含めて検出される)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    groups:
+      # @actions/core / @actions/github は同時に追従したい
+      actions-toolkit:
+        patterns:
+          - "@actions/*"
+      # dev 依存(typescript / @types/node / @vercel/ncc)の minor/patch は 1 PR に集約
+      dev-minor-patch:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    # major bump は安全のため個別 PR(group に含めない)
+
+  # .github/workflows/ 配下の uses: で参照している Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
