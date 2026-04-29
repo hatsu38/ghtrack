@@ -1,0 +1,17 @@
+name: ghtrack
+description: Track GitHub Actions workflow run durations over time on gh-pages.
+author: hatsu38
+
+branding:
+  icon: clock
+  color: blue
+
+inputs:
+  github-token:
+    description: GitHub token used to read workflow run / job data via the REST API.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: node24
+  main: dist/index.js
