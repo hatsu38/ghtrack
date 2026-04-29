@@ -29922,6 +29922,158 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 424:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectEntry = collectEntry;
+const core = __importStar(__nccwpck_require__(6966));
+const types_1 = __nccwpck_require__(7715);
+async function collectEntry({ octokit, owner, repo, context, }) {
+    const runId = context.runId;
+    core.info(`Collecting jobs for ${owner}/${repo} run ${runId}...`);
+    // 注意: 自分自身の run を観測しているため、現在実行中の最後の step は
+    // completed_at が null で返る。duration_sec は null のまま記録する。
+    const jobs = await octokit.paginate(octokit.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: runId, per_page: 100 });
+    const jobEntries = jobs.map((job) => ({
+        name: job.name,
+        duration_sec: computeDurationSec(job.started_at, job.completed_at),
+        status: job.status,
+        conclusion: job.conclusion,
+        steps: (job.steps ?? []).map(toStepEntry),
+    }));
+    logSummary(jobEntries);
+    return {
+        schema_version: types_1.SCHEMA_VERSION,
+        commit: context.sha,
+        branch: resolveBranch(context),
+        event: context.eventName,
+        date: Date.now(),
+        workflow: context.workflow,
+        workflow_file: resolveWorkflowFile(),
+        run_id: runId,
+        run_attempt: resolveRunAttempt(),
+        total_duration_sec: computeTotalDurationSec(jobs),
+        jobs: jobEntries,
+    };
+}
+function toStepEntry(step) {
+    return {
+        name: step.name,
+        number: step.number,
+        duration_sec: computeDurationSec(step.started_at, step.completed_at),
+        status: step.status,
+        conclusion: step.conclusion,
+    };
+}
+function computeDurationSec(startedAt, completedAt) {
+    if (!startedAt || !completedAt)
+        return null;
+    const start = new Date(startedAt).getTime();
+    const end = new Date(completedAt).getTime();
+    if (Number.isNaN(start) || Number.isNaN(end))
+        return null;
+    return (end - start) / 1000;
+}
+function computeTotalDurationSec(jobs) {
+    const starts = jobs
+        .map((j) => j.started_at)
+        .filter((v) => typeof v === "string")
+        .map((v) => new Date(v).getTime())
+        .filter((v) => !Number.isNaN(v));
+    const ends = jobs
+        .map((j) => j.completed_at)
+        .filter((v) => typeof v === "string")
+        .map((v) => new Date(v).getTime())
+        .filter((v) => !Number.isNaN(v));
+    if (starts.length === 0 || ends.length === 0)
+        return null;
+    return (Math.max(...ends) - Math.min(...starts)) / 1000;
+}
+function resolveBranch(context) {
+    if (context.eventName === "pull_request" ||
+        context.eventName === "pull_request_target") {
+        const headRef = context.payload.pull_request?.head?.ref;
+        return typeof headRef === "string" ? headRef : null;
+    }
+    if (context.ref.startsWith("refs/heads/")) {
+        return context.ref.slice("refs/heads/".length);
+    }
+    return null;
+}
+function resolveWorkflowFile() {
+    // GITHUB_WORKFLOW_REF 例:
+    //   "<owner>/<repo>/.github/workflows/test.yml@refs/heads/main"
+    const ref = process.env.GITHUB_WORKFLOW_REF ?? "";
+    const beforeAt = ref.split("@")[0] ?? "";
+    const parts = beforeAt.split("/");
+    return parts[parts.length - 1] ?? "";
+}
+function resolveRunAttempt() {
+    const raw = process.env.GITHUB_RUN_ATTEMPT;
+    const parsed = raw ? Number.parseInt(raw, 10) : 1;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+function logSummary(jobs) {
+    for (const job of jobs) {
+        core.info([
+            `Job: ${job.name}`,
+            `status=${job.status ?? "-"}`,
+            `conclusion=${job.conclusion ?? "-"}`,
+            `duration=${formatDurationSec(job.duration_sec)}`,
+        ].join(" | "));
+        for (const step of job.steps) {
+            core.info([
+                `  Step ${step.number}: ${step.name}`,
+                `status=${step.status ?? "-"}`,
+                `conclusion=${step.conclusion ?? "-"}`,
+                `duration=${formatDurationSec(step.duration_sec)}`,
+            ].join(" | "));
+        }
+    }
+}
+function formatDurationSec(durationSec) {
+    return durationSec === null ? "-" : `${durationSec.toFixed(2)}s`;
+}
+
+
+/***/ }),
+
 /***/ 6866:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -29963,66 +30115,327 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(6966));
 const github = __importStar(__nccwpck_require__(4903));
+const collect_1 = __nccwpck_require__(424);
+const storage_1 = __nccwpck_require__(3327);
 async function run() {
     try {
-        core.info("Hello from ghtrack!");
-        const token = core.getInput("github-token", { required: true });
-        const octokit = github.getOctokit(token);
+        const inputs = resolveInputs();
+        core.setSecret(inputs.token);
+        const octokit = github.getOctokit(inputs.token);
         const { owner, repo } = github.context.repo;
-        const runId = github.context.runId;
-        core.info(`Repository: ${owner}/${repo}`);
-        core.info(`Workflow run id: ${runId}`);
-        await logJobAndStepDurations(octokit, owner, repo, runId);
+        const entry = await (0, collect_1.collectEntry)({
+            octokit,
+            owner,
+            repo,
+            context: github.context,
+        });
+        const skipReason = decideSkip(github.context, inputs);
+        if (skipReason !== null) {
+            core.notice(`Skipping push: ${skipReason}`);
+            return;
+        }
+        await (0, storage_1.writeEntryToGhPages)({ octokit, owner, repo, inputs, entry });
     }
     catch (err) {
-        if (err instanceof Error) {
-            core.setFailed(err.message);
-        }
-        else {
-            core.setFailed(String(err));
-        }
+        core.setFailed(err instanceof Error ? err.message : String(err));
     }
 }
-async function logJobAndStepDurations(octokit, owner, repo, runId) {
-    // 注意: 自分自身の run を観測しているため、現在実行中の最後の step は
-    // completed_at が null になる。v0.1.0 ではこの仕様を許容する。
-    const jobs = await octokit.paginate(octokit.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: runId, per_page: 100 });
-    for (const job of jobs) {
-        const jobDuration = computeDurationSec(job.started_at, job.completed_at);
-        core.info([
-            `Job: ${job.name}`,
-            `status=${job.status}`,
-            `conclusion=${job.conclusion ?? "-"}`,
-            `started_at=${job.started_at ?? "-"}`,
-            `completed_at=${job.completed_at ?? "-"}`,
-            `duration=${formatDurationSec(jobDuration)}`,
-        ].join(" | "));
-        for (const step of job.steps ?? []) {
-            const stepDuration = computeDurationSec(step.started_at, step.completed_at);
-            core.info([
-                `  Step ${step.number}: ${step.name}`,
-                `status=${step.status}`,
-                `conclusion=${step.conclusion ?? "-"}`,
-                `started_at=${step.started_at ?? "-"}`,
-                `completed_at=${step.completed_at ?? "-"}`,
-                `duration=${formatDurationSec(stepDuration)}`,
-            ].join(" | "));
-        }
+function resolveInputs() {
+    const maxItemsRaw = core.getInput("max-items-in-history");
+    const maxItemsInHistory = maxItemsRaw === "" ? null : parsePositiveInt(maxItemsRaw, "max-items-in-history");
+    return {
+        token: core.getInput("github-token", { required: true }),
+        ghPagesBranch: core.getInput("gh-pages-branch") || "gh-pages",
+        dataFilePath: core.getInput("data-file-path") || "data/data.json",
+        autoPush: core.getBooleanInput("auto-push"),
+        autoCreateBranch: core.getBooleanInput("auto-create-branch"),
+        maxItemsInHistory,
+        skipForkPr: core.getBooleanInput("skip-fork-pr"),
+    };
+}
+function parsePositiveInt(raw, name) {
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n <= 0) {
+        throw new Error(`Invalid value for ${name}: "${raw}" — must be a positive integer.`);
     }
+    return n;
 }
-function computeDurationSec(startedAt, completedAt) {
-    if (!startedAt || !completedAt)
-        return null;
-    const start = new Date(startedAt).getTime();
-    const end = new Date(completedAt).getTime();
-    if (Number.isNaN(start) || Number.isNaN(end))
-        return null;
-    return (end - start) / 1000;
+function decideSkip(context, inputs) {
+    if (!inputs.autoPush) {
+        return "auto-push is disabled";
+    }
+    if (inputs.skipForkPr && isForkPullRequest(context)) {
+        return "running on a pull_request from a fork (no write access to base repo)";
+    }
+    return null;
 }
-function formatDurationSec(durationSec) {
-    return durationSec === null ? "-" : `${durationSec.toFixed(2)}s`;
+function isForkPullRequest(context) {
+    if (context.eventName !== "pull_request" &&
+        context.eventName !== "pull_request_target") {
+        return false;
+    }
+    const payload = context.payload;
+    const headFullName = payload.pull_request?.head?.repo?.full_name ?? null;
+    const baseFullName = `${context.repo.owner}/${context.repo.repo}`;
+    return headFullName !== null && headFullName !== baseFullName;
 }
 run();
+
+
+/***/ }),
+
+/***/ 3327:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.writeEntryToGhPages = writeEntryToGhPages;
+const core = __importStar(__nccwpck_require__(6966));
+const types_1 = __nccwpck_require__(7715);
+const COMMITTER = {
+    name: "github-actions[bot]",
+    email: "41898282+github-actions[bot]@users.noreply.github.com",
+};
+const MAX_PUSH_ATTEMPTS = 5;
+const RETRY_BASE_DELAY_MS = 500;
+async function writeEntryToGhPages(args) {
+    const branchExists = await branchExistsOnRemote(args);
+    if (!branchExists) {
+        if (!args.inputs.autoCreateBranch) {
+            throw new Error(`Branch "${args.inputs.ghPagesBranch}" does not exist and auto-create-branch is disabled.`);
+        }
+        const bootstrapped = await bootstrapBranch(args);
+        if (bootstrapped)
+            return;
+        // race condition: branch was concurrently created → fall through to update flow
+    }
+    await appendWithRetry(args);
+}
+async function branchExistsOnRemote(args) {
+    try {
+        await args.octokit.rest.git.getRef({
+            owner: args.owner,
+            repo: args.repo,
+            ref: `heads/${args.inputs.ghPagesBranch}`,
+        });
+        return true;
+    }
+    catch (err) {
+        if (errorStatus(err) === 404)
+            return false;
+        throw err;
+    }
+}
+async function bootstrapBranch(args) {
+    const initial = appendEntry((0, types_1.emptyDataFile)(), args.entry, args.inputs.maxItemsInHistory);
+    const blob = await args.octokit.rest.git.createBlob({
+        owner: args.owner,
+        repo: args.repo,
+        content: Buffer.from(serializeDataFile(initial), "utf-8").toString("base64"),
+        encoding: "base64",
+    });
+    const tree = await args.octokit.rest.git.createTree({
+        owner: args.owner,
+        repo: args.repo,
+        tree: [
+            {
+                path: args.inputs.dataFilePath,
+                mode: "100644",
+                type: "blob",
+                sha: blob.data.sha,
+            },
+        ],
+    });
+    const commit = await args.octokit.rest.git.createCommit({
+        owner: args.owner,
+        repo: args.repo,
+        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry`,
+        tree: tree.data.sha,
+        parents: [], // orphan commit — gh-pages を main 履歴と分離する
+        author: COMMITTER,
+        committer: COMMITTER,
+    });
+    try {
+        await args.octokit.rest.git.createRef({
+            owner: args.owner,
+            repo: args.repo,
+            ref: `refs/heads/${args.inputs.ghPagesBranch}`,
+            sha: commit.data.sha,
+        });
+        core.notice(`Auto-created branch "${args.inputs.ghPagesBranch}" with the first ghtrack entry.`);
+        return true;
+    }
+    catch (err) {
+        // 422 = ref already exists(他 runner が同時に作った)。update フローへフォールバック
+        if (errorStatus(err) === 422) {
+            core.warning(`Branch "${args.inputs.ghPagesBranch}" was concurrently created. Falling back to update flow.`);
+            return false;
+        }
+        throw err;
+    }
+}
+async function appendWithRetry(args) {
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+        try {
+            await appendOnce(args);
+            return;
+        }
+        catch (err) {
+            lastError = err;
+            const status = errorStatus(err);
+            const retryable = status === 409 || status === 422;
+            if (!retryable || attempt >= MAX_PUSH_ATTEMPTS) {
+                throw err;
+            }
+            const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+            core.warning(`Conflict (status=${status}) on attempt ${attempt}/${MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`);
+            await sleep(delay);
+        }
+    }
+    throw lastError;
+}
+async function appendOnce(args) {
+    const existing = await readDataFile(args);
+    const next = appendEntry(existing.data, args.entry, args.inputs.maxItemsInHistory);
+    await args.octokit.rest.repos.createOrUpdateFileContents({
+        owner: args.owner,
+        repo: args.repo,
+        path: args.inputs.dataFilePath,
+        branch: args.inputs.ghPagesBranch,
+        message: buildCommitMessage(args.entry),
+        content: Buffer.from(serializeDataFile(next), "utf-8").toString("base64"),
+        sha: existing.fileSha ?? undefined,
+        author: COMMITTER,
+        committer: COMMITTER,
+    });
+    core.info(`Appended entry (run_id=${args.entry.run_id}) to ${args.inputs.dataFilePath} on ${args.inputs.ghPagesBranch}. ` +
+        `Total entries: ${next.entries.length}.`);
+}
+async function readDataFile(args) {
+    try {
+        const res = await args.octokit.rest.repos.getContent({
+            owner: args.owner,
+            repo: args.repo,
+            path: args.inputs.dataFilePath,
+            ref: args.inputs.ghPagesBranch,
+        });
+        if (Array.isArray(res.data)) {
+            throw new Error(`${args.inputs.dataFilePath} is a directory on ${args.inputs.ghPagesBranch}, expected a file.`);
+        }
+        if (res.data.type !== "file") {
+            throw new Error(`${args.inputs.dataFilePath} is not a regular file (type=${res.data.type}).`);
+        }
+        if (typeof res.data.content !== "string" || res.data.content.length === 0) {
+            // Contents API は >1MB のファイルでは content を返さない。
+            // 履歴が肥大化したら max-items-in-history で切り詰めるか、後続で git data API 移行を検討。
+            throw new Error(`${args.inputs.dataFilePath} is too large for the Contents API. ` +
+                `Set max-items-in-history to prune history.`);
+        }
+        const text = Buffer.from(res.data.content, "base64").toString("utf-8");
+        return { data: parseDataFile(text), fileSha: res.data.sha };
+    }
+    catch (err) {
+        if (errorStatus(err) === 404) {
+            return { data: (0, types_1.emptyDataFile)(), fileSha: null };
+        }
+        throw err;
+    }
+}
+function parseDataFile(text) {
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch (e) {
+        throw new Error(`Existing data file is not valid JSON: ${e.message}`);
+    }
+    if (!isDataFile(parsed)) {
+        throw new Error(`Existing data file does not match the expected schema (schema_version=${types_1.SCHEMA_VERSION}).`);
+    }
+    return parsed;
+}
+function isDataFile(value) {
+    if (typeof value !== "object" || value === null)
+        return false;
+    const candidate = value;
+    return (candidate.schema_version === types_1.SCHEMA_VERSION &&
+        Array.isArray(candidate.entries));
+}
+function appendEntry(data, entry, maxItems) {
+    const entries = [...data.entries, entry];
+    const truncated = maxItems !== null && entries.length > maxItems
+        ? entries.slice(entries.length - maxItems)
+        : entries;
+    return { schema_version: types_1.SCHEMA_VERSION, entries: truncated };
+}
+function serializeDataFile(data) {
+    return `${JSON.stringify(data, null, 2)}\n`;
+}
+function buildCommitMessage(entry) {
+    return `chore(ghtrack): append run ${entry.run_id} for ${entry.workflow}`;
+}
+function errorStatus(err) {
+    if (err && typeof err === "object" && "status" in err) {
+        const status = err.status;
+        if (typeof status === "number")
+            return status;
+    }
+    return null;
+}
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+/***/ }),
+
+/***/ 7715:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SCHEMA_VERSION = void 0;
+exports.emptyDataFile = emptyDataFile;
+exports.SCHEMA_VERSION = 1;
+function emptyDataFile() {
+    return { schema_version: exports.SCHEMA_VERSION, entries: [] };
+}
 
 
 /***/ }),

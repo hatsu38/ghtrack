@@ -1,88 +1,86 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-
-type Octokit = ReturnType<typeof github.getOctokit>;
+import { collectEntry } from "./collect";
+import { writeEntryToGhPages } from "./storage";
+import type { Inputs } from "./types";
 
 async function run(): Promise<void> {
   try {
-    core.info("Hello from ghtrack!");
+    const inputs = resolveInputs();
+    core.setSecret(inputs.token);
 
-    const token = core.getInput("github-token", { required: true });
-    const octokit = github.getOctokit(token);
+    const octokit = github.getOctokit(inputs.token);
     const { owner, repo } = github.context.repo;
-    const runId = github.context.runId;
 
-    core.info(`Repository: ${owner}/${repo}`);
-    core.info(`Workflow run id: ${runId}`);
+    const entry = await collectEntry({
+      octokit,
+      owner,
+      repo,
+      context: github.context,
+    });
 
-    await logJobAndStepDurations(octokit, owner, repo, runId);
+    const skipReason = decideSkip(github.context, inputs);
+    if (skipReason !== null) {
+      core.notice(`Skipping push: ${skipReason}`);
+      return;
+    }
+
+    await writeEntryToGhPages({ octokit, owner, repo, inputs, entry });
   } catch (err) {
-    if (err instanceof Error) {
-      core.setFailed(err.message);
-    } else {
-      core.setFailed(String(err));
-    }
+    core.setFailed(err instanceof Error ? err.message : String(err));
   }
 }
 
-async function logJobAndStepDurations(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  runId: number,
-): Promise<void> {
-  // 注意: 自分自身の run を観測しているため、現在実行中の最後の step は
-  // completed_at が null になる。v0.1.0 ではこの仕様を許容する。
-  const jobs = await octokit.paginate(
-    octokit.rest.actions.listJobsForWorkflowRun,
-    { owner, repo, run_id: runId, per_page: 100 },
-  );
+function resolveInputs(): Inputs {
+  const maxItemsRaw = core.getInput("max-items-in-history");
+  const maxItemsInHistory =
+    maxItemsRaw === "" ? null : parsePositiveInt(maxItemsRaw, "max-items-in-history");
 
-  for (const job of jobs) {
-    const jobDuration = computeDurationSec(job.started_at, job.completed_at);
-    core.info(
-      [
-        `Job: ${job.name}`,
-        `status=${job.status}`,
-        `conclusion=${job.conclusion ?? "-"}`,
-        `started_at=${job.started_at ?? "-"}`,
-        `completed_at=${job.completed_at ?? "-"}`,
-        `duration=${formatDurationSec(jobDuration)}`,
-      ].join(" | "),
-    );
+  return {
+    token: core.getInput("github-token", { required: true }),
+    ghPagesBranch: core.getInput("gh-pages-branch") || "gh-pages",
+    dataFilePath: core.getInput("data-file-path") || "data/data.json",
+    autoPush: core.getBooleanInput("auto-push"),
+    autoCreateBranch: core.getBooleanInput("auto-create-branch"),
+    maxItemsInHistory,
+    skipForkPr: core.getBooleanInput("skip-fork-pr"),
+  };
+}
 
-    for (const step of job.steps ?? []) {
-      const stepDuration = computeDurationSec(
-        step.started_at,
-        step.completed_at,
-      );
-      core.info(
-        [
-          `  Step ${step.number}: ${step.name}`,
-          `status=${step.status}`,
-          `conclusion=${step.conclusion ?? "-"}`,
-          `started_at=${step.started_at ?? "-"}`,
-          `completed_at=${step.completed_at ?? "-"}`,
-          `duration=${formatDurationSec(stepDuration)}`,
-        ].join(" | "),
-      );
-    }
+function parsePositiveInt(raw: string, name: string): number {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`Invalid value for ${name}: "${raw}" — must be a positive integer.`);
   }
+  return n;
 }
 
-function computeDurationSec(
-  startedAt: string | null | undefined,
-  completedAt: string | null | undefined,
-): number | null {
-  if (!startedAt || !completedAt) return null;
-  const start = new Date(startedAt).getTime();
-  const end = new Date(completedAt).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end)) return null;
-  return (end - start) / 1000;
+function decideSkip(
+  context: typeof github.context,
+  inputs: Inputs,
+): string | null {
+  if (!inputs.autoPush) {
+    return "auto-push is disabled";
+  }
+  if (inputs.skipForkPr && isForkPullRequest(context)) {
+    return "running on a pull_request from a fork (no write access to base repo)";
+  }
+  return null;
 }
 
-function formatDurationSec(durationSec: number | null): string {
-  return durationSec === null ? "-" : `${durationSec.toFixed(2)}s`;
+function isForkPullRequest(context: typeof github.context): boolean {
+  if (
+    context.eventName !== "pull_request" &&
+    context.eventName !== "pull_request_target"
+  ) {
+    return false;
+  }
+  const payload = context.payload as {
+    pull_request?: { head?: { repo?: { full_name?: string | null } | null } };
+  };
+  const headFullName = payload.pull_request?.head?.repo?.full_name ?? null;
+  const baseFullName = `${context.repo.owner}/${context.repo.repo}`;
+  return headFullName !== null && headFullName !== baseFullName;
 }
 
 run();
