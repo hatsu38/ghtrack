@@ -39,3 +39,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # v7 で autolabeler が別アクションに分離され、現在の workflow 構成のままでは
+      # pull_request 時に target_commitish が refs/pull/N/merge となり API が失敗する。
+      # 移行する場合は workflow の構造ごと書き換える必要があるため、major bump は手動対応。
+      - dependency-name: "release-drafter/release-drafter"
+        update-types:
+          - "version-update:semver-major"
