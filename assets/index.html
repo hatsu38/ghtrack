@@ -77,6 +77,20 @@
       border-radius: 8px;
     }
 
+    .controls {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .controls label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .controls input[type="checkbox"] { cursor: pointer; }
+
     footer {
       margin-top: 48px;
       padding-top: 16px;
@@ -102,6 +116,12 @@
 
   <section>
     <h2>Per-job duration</h2>
+    <p class="controls">
+      <label>
+        <input type="checkbox" id="groupMatrixToggle">
+        matrix を集約 (max) して表示
+      </label>
+    </p>
     <div class="chart-wrap"><canvas id="jobChart"></canvas></div>
     <p class="meta" id="jobMeta"></p>
   </section>
@@ -169,6 +189,30 @@
     return entry.workflow_file || entry.workflow || "(unknown)";
   }
 
+  // matrix permutation の job 名(末尾が "(N)" や "(N, M)" など)を検出して、
+  // base 名の下にまとめるためのキー変換。
+  const MATRIX_RE = /^(.+?) \(\d+(?:, *\d+)*\)$/;
+  function groupKeyFor(name, on) {
+    if (!on) return name;
+    const m = MATRIX_RE.exec(name);
+    return m ? `${m[1]} (matrix)` : name;
+  }
+
+  const GROUP_MATRIX_STORAGE_KEY = "ghtrack:groupMatrix";
+  function getMatrixGrouping() {
+    try {
+      const v = localStorage.getItem(GROUP_MATRIX_STORAGE_KEY);
+      return v === null ? true : v === "true";
+    } catch (_) {
+      return true;
+    }
+  }
+  function setMatrixGrouping(value) {
+    try {
+      localStorage.setItem(GROUP_MATRIX_STORAGE_KEY, value ? "true" : "false");
+    } catch (_) { /* private mode 等で無視 */ }
+  }
+
   function groupByKey(entries, keyFn) {
     const map = new Map();
     for (const e of entries) {
@@ -218,15 +262,24 @@
       `(latest: ${new Date(usable[usable.length - 1].date).toLocaleString()})`;
   }
 
-  function buildJobChart(entries) {
-    // ${workflow_file}::${job.name} で集計して、別 workflow で同名 job が
-    // 衝突するケース(複数 workflow が同 repo に蓄積)を分離する。
+  function buildJobChart(entries, opts) {
+    const groupMatrix = !!(opts && opts.groupMatrix);
+    const canvas = document.getElementById("jobChart");
+    if (!canvas) return;
+
+    // toggle 切替時の再描画に備え、既存 instance があれば破棄する。
+    const existing = Chart.getChart && Chart.getChart(canvas);
+    if (existing) existing.destroy();
+
+    // ${workflow_file}::${groupName} で集計。groupMatrix=true の時は matrix の
+    // permutation 群を base 名 "(matrix)" にまとめ、各 run で max を取る。
     const seen = new Map();
     for (const e of entries) {
       const wf = workflowKey(e);
       for (const j of e.jobs) {
-        const key = `${wf}::${j.name}`;
-        if (!seen.has(key)) seen.set(key, { workflow: wf, jobName: j.name });
+        const groupName = groupKeyFor(j.name, groupMatrix);
+        const key = `${wf}::${groupName}`;
+        if (!seen.has(key)) seen.set(key, { workflow: wf, groupName });
       }
     }
     if (seen.size === 0) {
@@ -238,9 +291,23 @@
       const data = entries
         .filter((e) => workflowKey(e) === meta.workflow)
         .map((e) => {
-          const job = e.jobs.find((j) => j.name === meta.jobName);
-          if (!job || typeof job.duration_sec !== "number") return null;
-          return { x: e.date, y: job.duration_sec, raw: e, jobRaw: job };
+          const matched = e.jobs.filter(
+            (j) => groupKeyFor(j.name, groupMatrix) === meta.groupName,
+          );
+          const withDuration = matched.filter((j) => typeof j.duration_sec === "number");
+          if (withDuration.length === 0) return null;
+          // max を取る = 並列実行で wall-clock を決める bottleneck node
+          const slowest = withDuration.reduce(
+            (a, b) => (a.duration_sec >= b.duration_sec ? a : b),
+          );
+          return {
+            x: e.date,
+            y: slowest.duration_sec,
+            raw: e,
+            jobRaw: slowest,
+            matrixCount: matched.length,
+            groupName: meta.groupName,
+          };
         })
         .filter((p) => p !== null);
       const color = colorAt(i);
@@ -255,21 +322,26 @@
       };
     });
 
-    new Chart(document.getElementById("jobChart"), {
+    new Chart(canvas, {
       type: "line",
       data: { datasets },
       options: chartOptions((point) => {
         if (!point || !point.raw) return [];
-        return [
-          `workflow: ${point.raw.workflow}`,
-          `job: ${point.jobRaw.name}`,
-          `commit ${String(point.raw.commit).slice(0, 7)}`,
-          `conclusion: ${point.jobRaw.conclusion ?? "-"}`,
-        ];
+        const lines = [`workflow: ${point.raw.workflow}`];
+        if (point.matrixCount > 1) {
+          lines.push(`job: ${point.groupName} (max of ${point.matrixCount} matrix nodes)`);
+          lines.push(`slowest: ${point.jobRaw.name}`);
+        } else {
+          lines.push(`job: ${point.jobRaw.name}`);
+        }
+        lines.push(`commit ${String(point.raw.commit).slice(0, 7)}`);
+        lines.push(`conclusion: ${point.jobRaw.conclusion ?? "-"}`);
+        return lines;
       }),
     });
     document.getElementById("jobMeta").textContent =
-      `${seen.size} job(s) tracked across ${entries.length} run(s).`;
+      `${seen.size} job(s) tracked across ${entries.length} run(s)` +
+      (groupMatrix ? " (matrix aggregated)" : "") + ".";
   }
 
   function fetchJson(path) {
@@ -311,7 +383,17 @@
       }
       entries.sort((a, b) => a.date - b.date);
       buildTotalChart(entries);
-      buildJobChart(entries);
+
+      const renderJob = () => buildJobChart(entries, { groupMatrix: getMatrixGrouping() });
+      const toggle = document.getElementById("groupMatrixToggle");
+      if (toggle) {
+        toggle.checked = getMatrixGrouping();
+        toggle.addEventListener("change", () => {
+          setMatrixGrouping(toggle.checked);
+          renderJob();
+        });
+      }
+      renderJob();
     })
     .catch((err) => {
       replaceWithEmpty("totalChart", `Failed to load ghtrack data: ${err.message}`);
