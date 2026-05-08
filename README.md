@@ -130,7 +130,7 @@ manifest が無い古い gh-pages では従来の `data/data.json` 単一読み�
 Action は実行のたびに `gh-pages` branch の root に `index.html` を同梱(差分があれば自動同期)する。Chart.js v4 + date-fns adapter を CDN(jsDelivr)から読み込み、`fetch('./data/data.json')` でデータを取って 2 つの時系列グラフを描く構成:
 
 - **Total duration per run**: 各 run の `total_duration_sec` を点で並べた折れ線
-- **Per-job duration**: 各 job 名ごとに別 dataset を並べた折れ線
+- **Per-job duration**: 各 job 名ごとに別 dataset を並べた折れ線。matrix permutation (`name (N)` / `name (N, M)` 形式) はデフォルトで base 名にまとめられ、各 run で **max(matrix node duration)** が表示される(並列実行で wall-clock を決める bottleneck node)。チャート上のチェックボックスで matrix を展開して個別 node 表示にも切り替え可能(設定は `localStorage` に保存される)
 
 ライト/ダークは `prefers-color-scheme` で自動切り替え。viewport meta + max-width 960px のレスポンシブ。
 

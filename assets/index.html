@@ -49,12 +49,27 @@
 
     .subtitle { color: var(--muted); font-size: 14px; margin: 0; }
 
-    section { margin-bottom: 36px; }
-    h2 { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+    section.source { margin-bottom: 48px; }
+    section.source + section.source {
+      border-top: 1px solid var(--border);
+      padding-top: 32px;
+    }
+
+    h2 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .source-meta { color: var(--muted); font-size: 13px; margin: 0; }
 
     .chart-wrap {
       position: relative;
-      height: 360px;
+      height: 300px;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -77,6 +92,20 @@
       border-radius: 8px;
     }
 
+    .global-controls {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .global-controls label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .global-controls input[type="checkbox"] { cursor: pointer; }
+
     footer {
       margin-top: 48px;
       padding-top: 16px;
@@ -94,17 +123,14 @@
     <p class="subtitle">Workflow run duration trends, captured by ghtrack.</p>
   </header>
 
-  <section>
-    <h2>Total duration per run</h2>
-    <div class="chart-wrap"><canvas id="totalChart"></canvas></div>
-    <p class="meta" id="totalMeta"></p>
-  </section>
+  <div class="global-controls">
+    <label>
+      <input type="checkbox" id="groupMatrixToggle">
+      matrix を集約 (max) して表示
+    </label>
+  </div>
 
-  <section>
-    <h2>Per-job duration</h2>
-    <div class="chart-wrap"><canvas id="jobChart"></canvas></div>
-    <p class="meta" id="jobMeta"></p>
-  </section>
+  <div id="sources"></div>
 
   <footer>
     Powered by <a href="https://github.com/hatsu38/ghtrack">ghtrack</a> ·
@@ -118,13 +144,34 @@
 (function () {
   "use strict";
 
-  function replaceWithEmpty(canvasId, message) {
-    const el = document.getElementById(canvasId);
-    if (!el) return;
-    const div = document.createElement("div");
-    div.className = "empty";
-    div.textContent = message;
-    el.parentNode.replaceChild(div, el);
+  const PALETTE = [
+    "#1f6feb", "#bf8700", "#bc4c00", "#3fb950",
+    "#a371f7", "#db61a2", "#0a3069", "#bc8cff",
+  ];
+  function colorAt(i) { return PALETTE[i % PALETTE.length]; }
+
+  // matrix permutation の job 名(末尾が "(N)" や "(N, M)" など)を検出して、
+  // base 名の下にまとめるためのキー変換。
+  const MATRIX_RE = /^(.+?) \(\d+(?:, *\d+)*\)$/;
+  function groupKeyFor(name, on) {
+    if (!on) return name;
+    const m = MATRIX_RE.exec(name);
+    return m ? `${m[1]} (matrix)` : name;
+  }
+
+  const GROUP_MATRIX_STORAGE_KEY = "ghtrack:groupMatrix";
+  function getMatrixGrouping() {
+    try {
+      const v = localStorage.getItem(GROUP_MATRIX_STORAGE_KEY);
+      return v === null ? true : v === "true";
+    } catch (_) {
+      return true;
+    }
+  }
+  function setMatrixGrouping(value) {
+    try {
+      localStorage.setItem(GROUP_MATRIX_STORAGE_KEY, value ? "true" : "false");
+    } catch (_) { /* private mode 等で無視 */ }
   }
 
   function chartOptions(tooltipExtra) {
@@ -158,94 +205,103 @@
     };
   }
 
-  const PALETTE = [
-    "#1f6feb", "#bf8700", "#bc4c00", "#3fb950",
-    "#a371f7", "#db61a2", "#0a3069", "#bc8cff",
-  ];
-
-  function colorAt(i) { return PALETTE[i % PALETTE.length]; }
-
-  function workflowKey(entry) {
-    return entry.workflow_file || entry.workflow || "(unknown)";
+  function destroyChartOn(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+    const existing = Chart.getChart && Chart.getChart(canvas);
+    if (existing) existing.destroy();
+    return canvas;
   }
 
-  function groupByKey(entries, keyFn) {
-    const map = new Map();
-    for (const e of entries) {
-      const key = keyFn(e);
-      const list = map.get(key) ?? [];
-      list.push(e);
-      map.set(key, list);
-    }
-    return map;
+  function replaceWithEmpty(canvasId, message) {
+    const el = document.getElementById(canvasId);
+    if (!el) return;
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.textContent = message;
+    el.parentNode.replaceChild(div, el);
   }
 
-  function buildTotalChart(entries) {
+  function buildTotalChart(entries, canvasId) {
     const usable = entries.filter((e) => typeof e.total_duration_sec === "number");
     if (usable.length === 0) {
-      replaceWithEmpty("totalChart", "No total_duration_sec recorded yet.");
+      replaceWithEmpty(canvasId, "No total_duration_sec recorded yet.");
       return;
     }
-    const grouped = groupByKey(usable, workflowKey);
-    const datasets = Array.from(grouped.entries()).map(([wf, list], i) => {
-      const color = colorAt(i);
-      return {
-        label: wf,
-        data: list.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e })),
-        borderColor: color,
-        backgroundColor: color + "26",
-        tension: 0.25,
-        fill: grouped.size === 1,
-        pointRadius: 3,
-      };
-    });
-    new Chart(document.getElementById("totalChart"), {
+    const canvas = destroyChartOn(canvasId);
+    if (!canvas) return;
+    const color = colorAt(0);
+    new Chart(canvas, {
       type: "line",
-      data: { datasets },
+      data: {
+        datasets: [{
+          label: "Total duration (sec)",
+          data: usable.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e })),
+          borderColor: color,
+          backgroundColor: color + "26",
+          tension: 0.25,
+          fill: true,
+          pointRadius: 3,
+        }],
+      },
       options: chartOptions((point) => {
         const e = point.raw;
         if (!e) return [];
         return [
           `commit ${String(e.commit).slice(0, 7)}`,
-          `workflow: ${e.workflow}`,
           `event: ${e.event}`,
           e.run_attempt && e.run_attempt > 1 ? `run_attempt: ${e.run_attempt}` : null,
         ];
       }),
     });
-    document.getElementById("totalMeta").textContent =
-      `${usable.length} runs across ${grouped.size} workflow(s) ` +
-      `(latest: ${new Date(usable[usable.length - 1].date).toLocaleString()})`;
   }
 
-  function buildJobChart(entries) {
-    // ${workflow_file}::${job.name} で集計して、別 workflow で同名 job が
-    // 衝突するケース(複数 workflow が同 repo に蓄積)を分離する。
-    const seen = new Map();
-    for (const e of entries) {
-      const wf = workflowKey(e);
-      for (const j of e.jobs) {
-        const key = `${wf}::${j.name}`;
-        if (!seen.has(key)) seen.set(key, { workflow: wf, jobName: j.name });
+  function buildJobChart(entries, canvasId, metaId, groupMatrix) {
+    const canvas = destroyChartOn(canvasId);
+    if (!canvas) return;
+
+    // entry ごとに groupName → matching jobs の Map を一度だけ作る。
+    // 後続の dataset 構築で `groupKeyFor` 再評価と二重 filter を避ける。
+    const groupNames = new Set();
+    const perEntry = entries.map((entry) => {
+      const byGroup = new Map();
+      for (const j of entry.jobs) {
+        const k = groupKeyFor(j.name, groupMatrix);
+        if (!byGroup.has(k)) byGroup.set(k, []);
+        byGroup.get(k).push(j);
+        groupNames.add(k);
       }
-    }
-    if (seen.size === 0) {
-      replaceWithEmpty("jobChart", "No jobs recorded yet.");
+      return { entry, byGroup };
+    });
+    if (groupNames.size === 0) {
+      replaceWithEmpty(canvasId, "No jobs recorded yet.");
       return;
     }
 
-    const datasets = Array.from(seen.entries()).map(([key, meta], i) => {
-      const data = entries
-        .filter((e) => workflowKey(e) === meta.workflow)
-        .map((e) => {
-          const job = e.jobs.find((j) => j.name === meta.jobName);
-          if (!job || typeof job.duration_sec !== "number") return null;
-          return { x: e.date, y: job.duration_sec, raw: e, jobRaw: job };
+    const datasets = [...groupNames].map((groupName, i) => {
+      const data = perEntry
+        .map(({ entry, byGroup }) => {
+          const matched = byGroup.get(groupName);
+          if (!matched) return null;
+          const withDuration = matched.filter((j) => typeof j.duration_sec === "number");
+          if (withDuration.length === 0) return null;
+          // max を取る = 並列実行で wall-clock を決める bottleneck node
+          const slowest = withDuration.reduce(
+            (a, b) => (a.duration_sec >= b.duration_sec ? a : b),
+          );
+          return {
+            x: entry.date,
+            y: slowest.duration_sec,
+            raw: entry,
+            jobRaw: slowest,
+            matrixCount: matched.length,
+            groupName,
+          };
         })
         .filter((p) => p !== null);
       const color = colorAt(i);
       return {
-        label: key,
+        label: groupName,
         data,
         borderColor: color,
         backgroundColor: color + "22",
@@ -255,21 +311,90 @@
       };
     });
 
-    new Chart(document.getElementById("jobChart"), {
+    new Chart(canvas, {
       type: "line",
       data: { datasets },
       options: chartOptions((point) => {
         if (!point || !point.raw) return [];
-        return [
-          `workflow: ${point.raw.workflow}`,
-          `job: ${point.jobRaw.name}`,
-          `commit ${String(point.raw.commit).slice(0, 7)}`,
-          `conclusion: ${point.jobRaw.conclusion ?? "-"}`,
-        ];
+        const lines = [];
+        if (point.matrixCount > 1) {
+          lines.push(`job: ${point.groupName} (max of ${point.matrixCount} matrix nodes)`);
+          lines.push(`slowest: ${point.jobRaw.name}`);
+        } else {
+          lines.push(`job: ${point.jobRaw.name}`);
+        }
+        lines.push(`commit ${String(point.raw.commit).slice(0, 7)}`);
+        lines.push(`conclusion: ${point.jobRaw.conclusion ?? "-"}`);
+        return lines;
       }),
     });
-    document.getElementById("jobMeta").textContent =
-      `${seen.size} job(s) tracked across ${entries.length} run(s).`;
+
+    const metaEl = document.getElementById(metaId);
+    if (metaEl) {
+      metaEl.textContent =
+        `${groupNames.size} job(s) tracked across ${entries.length} run(s)` +
+        (groupMatrix ? " (matrix aggregated)" : "") + ".";
+    }
+  }
+
+  function deriveSourceTitle(source) {
+    const e = source.entries[0];
+    return e.workflow || e.workflow_file || source.path;
+  }
+
+  function renderSourceSection(source, idx, container) {
+    const totalCanvasId = `total-${idx}`;
+    const jobCanvasId = `job-${idx}`;
+    const jobMetaId = `job-meta-${idx}`;
+
+    const section = document.createElement("section");
+    section.className = "source";
+
+    const title = document.createElement("h2");
+    title.textContent = deriveSourceTitle(source);
+    section.appendChild(title);
+
+    const meta = document.createElement("p");
+    meta.className = "source-meta";
+    const latest = source.entries.length > 0
+      ? new Date(source.entries[source.entries.length - 1].date).toLocaleString()
+      : null;
+    meta.textContent =
+      `${source.path} · ${source.entries.length} run(s)` +
+      (latest ? ` (latest: ${latest})` : "");
+    section.appendChild(meta);
+
+    const totalH3 = document.createElement("h3");
+    totalH3.textContent = "Total duration per run";
+    section.appendChild(totalH3);
+
+    const totalWrap = document.createElement("div");
+    totalWrap.className = "chart-wrap";
+    const totalCanvas = document.createElement("canvas");
+    totalCanvas.id = totalCanvasId;
+    totalWrap.appendChild(totalCanvas);
+    section.appendChild(totalWrap);
+
+    const jobH3 = document.createElement("h3");
+    jobH3.textContent = "Per-job duration";
+    section.appendChild(jobH3);
+
+    const jobWrap = document.createElement("div");
+    jobWrap.className = "chart-wrap";
+    const jobCanvas = document.createElement("canvas");
+    jobCanvas.id = jobCanvasId;
+    jobWrap.appendChild(jobCanvas);
+    section.appendChild(jobWrap);
+
+    const jobMeta = document.createElement("p");
+    jobMeta.className = "meta";
+    jobMeta.id = jobMetaId;
+    section.appendChild(jobMeta);
+
+    container.appendChild(section);
+
+    buildTotalChart(source.entries, totalCanvasId);
+    return { source, jobCanvasId, jobMetaId };
   }
 
   function fetchJson(path) {
@@ -297,25 +422,61 @@
 
   resolveSourcePaths()
     .then((paths) => Promise.all(
-      paths.map((p) => fetchJson(p).catch((err) => {
-        console.warn(`ghtrack: failed to load ${p}: ${err.message}`);
-        return { entries: [] };
-      })),
+      paths.map((p) => fetchJson(p)
+        .then((data) => ({ path: p, data }))
+        .catch((err) => {
+          console.warn(`ghtrack: failed to load ${p}: ${err.message}`);
+          return { path: p, data: { entries: [] } };
+        })),
     ))
-    .then((files) => {
-      const entries = files.flatMap((f) => Array.isArray(f && f.entries) ? f.entries : []);
-      if (entries.length === 0) {
-        replaceWithEmpty("totalChart", "No entries yet. Run the workflow at least once.");
-        replaceWithEmpty("jobChart", "");
+    .then((sources) => {
+      const sourcesData = sources.map((s) => ({
+        path: s.path,
+        entries: (s.data && Array.isArray(s.data.entries) ? s.data.entries : [])
+          .slice()
+          .sort((a, b) => a.date - b.date),
+      }));
+
+      const populated = sourcesData.filter((s) => s.entries.length > 0);
+      const container = document.getElementById("sources");
+
+      if (populated.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No entries yet. Run the workflow at least once.";
+        container.appendChild(empty);
         return;
       }
-      entries.sort((a, b) => a.date - b.date);
-      buildTotalChart(entries);
-      buildJobChart(entries);
+
+      const jobChartTargets = [];
+      populated.forEach((source, i) => {
+        const target = renderSourceSection(source, i, container);
+        if (target) jobChartTargets.push(target);
+      });
+
+      const renderAllJobCharts = () => {
+        const groupMatrix = getMatrixGrouping();
+        for (const t of jobChartTargets) {
+          buildJobChart(t.source.entries, t.jobCanvasId, t.jobMetaId, groupMatrix);
+        }
+      };
+
+      const toggle = document.getElementById("groupMatrixToggle");
+      if (toggle) {
+        toggle.checked = getMatrixGrouping();
+        toggle.addEventListener("change", () => {
+          setMatrixGrouping(toggle.checked);
+          renderAllJobCharts();
+        });
+      }
+      renderAllJobCharts();
     })
     .catch((err) => {
-      replaceWithEmpty("totalChart", `Failed to load ghtrack data: ${err.message}`);
-      replaceWithEmpty("jobChart", "");
+      const container = document.getElementById("sources");
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = `Failed to load ghtrack data: ${err.message}`;
+      container.appendChild(empty);
     });
 })();
 </script>
