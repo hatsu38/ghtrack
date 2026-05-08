@@ -158,28 +158,50 @@
     };
   }
 
+  const PALETTE = [
+    "#1f6feb", "#bf8700", "#bc4c00", "#3fb950",
+    "#a371f7", "#db61a2", "#0a3069", "#bc8cff",
+  ];
+
+  function colorAt(i) { return PALETTE[i % PALETTE.length]; }
+
+  function workflowKey(entry) {
+    return entry.workflow_file || entry.workflow || "(unknown)";
+  }
+
+  function groupByKey(entries, keyFn) {
+    const map = new Map();
+    for (const e of entries) {
+      const key = keyFn(e);
+      const list = map.get(key) ?? [];
+      list.push(e);
+      map.set(key, list);
+    }
+    return map;
+  }
+
   function buildTotalChart(entries) {
-    const points = entries
-      .filter((e) => typeof e.total_duration_sec === "number")
-      .map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e }));
-    if (points.length === 0) {
+    const usable = entries.filter((e) => typeof e.total_duration_sec === "number");
+    if (usable.length === 0) {
       replaceWithEmpty("totalChart", "No total_duration_sec recorded yet.");
       return;
     }
-    const ctx = document.getElementById("totalChart");
-    new Chart(ctx, {
+    const grouped = groupByKey(usable, workflowKey);
+    const datasets = Array.from(grouped.entries()).map(([wf, list], i) => {
+      const color = colorAt(i);
+      return {
+        label: wf,
+        data: list.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e })),
+        borderColor: color,
+        backgroundColor: color + "26",
+        tension: 0.25,
+        fill: grouped.size === 1,
+        pointRadius: 3,
+      };
+    });
+    new Chart(document.getElementById("totalChart"), {
       type: "line",
-      data: {
-        datasets: [{
-          label: "Total duration (sec)",
-          data: points,
-          borderColor: "rgb(31, 111, 235)",
-          backgroundColor: "rgba(31, 111, 235, 0.15)",
-          tension: 0.25,
-          fill: true,
-          pointRadius: 3,
-        }],
-      },
+      data: { datasets },
       options: chartOptions((point) => {
         const e = point.raw;
         if (!e) return [];
@@ -192,32 +214,38 @@
       }),
     });
     document.getElementById("totalMeta").textContent =
-      `${points.length} runs (latest: ${new Date(points[points.length - 1].x).toLocaleString()})`;
+      `${usable.length} runs across ${grouped.size} workflow(s) ` +
+      `(latest: ${new Date(usable[usable.length - 1].date).toLocaleString()})`;
   }
 
   function buildJobChart(entries) {
-    const jobNames = Array.from(
-      new Set(entries.flatMap((e) => e.jobs.map((j) => j.name))),
-    );
-    if (jobNames.length === 0) {
+    // ${workflow_file}::${job.name} で集計して、別 workflow で同名 job が
+    // 衝突するケース(複数 workflow が同 repo に蓄積)を分離する。
+    const seen = new Map();
+    for (const e of entries) {
+      const wf = workflowKey(e);
+      for (const j of e.jobs) {
+        const key = `${wf}::${j.name}`;
+        if (!seen.has(key)) seen.set(key, { workflow: wf, jobName: j.name });
+      }
+    }
+    if (seen.size === 0) {
       replaceWithEmpty("jobChart", "No jobs recorded yet.");
       return;
     }
-    const palette = [
-      "#1f6feb", "#bf8700", "#bc4c00", "#3fb950",
-      "#a371f7", "#db61a2", "#0a3069", "#bc8cff",
-    ];
-    const datasets = jobNames.map((name, i) => {
+
+    const datasets = Array.from(seen.entries()).map(([key, meta], i) => {
       const data = entries
+        .filter((e) => workflowKey(e) === meta.workflow)
         .map((e) => {
-          const job = e.jobs.find((j) => j.name === name);
+          const job = e.jobs.find((j) => j.name === meta.jobName);
           if (!job || typeof job.duration_sec !== "number") return null;
           return { x: e.date, y: job.duration_sec, raw: e, jobRaw: job };
         })
         .filter((p) => p !== null);
-      const color = palette[i % palette.length];
+      const color = colorAt(i);
       return {
-        label: name,
+        label: key,
         data,
         borderColor: color,
         backgroundColor: color + "22",
@@ -226,12 +254,14 @@
         pointRadius: 3,
       };
     });
+
     new Chart(document.getElementById("jobChart"), {
       type: "line",
       data: { datasets },
       options: chartOptions((point) => {
         if (!point || !point.raw) return [];
         return [
+          `workflow: ${point.raw.workflow}`,
           `job: ${point.jobRaw.name}`,
           `commit ${String(point.raw.commit).slice(0, 7)}`,
           `conclusion: ${point.jobRaw.conclusion ?? "-"}`,
@@ -239,16 +269,41 @@
       }),
     });
     document.getElementById("jobMeta").textContent =
-      `${jobNames.length} job(s) tracked across ${entries.length} run(s).`;
+      `${seen.size} job(s) tracked across ${entries.length} run(s).`;
   }
 
-  fetch("./data/data.json", { cache: "no-cache" })
-    .then((res) => {
+  function fetchJson(path) {
+    return fetch(path, { cache: "no-cache" }).then((res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
-    })
-    .then((file) => {
-      const entries = file && Array.isArray(file.entries) ? file.entries : [];
+    });
+  }
+
+  // manifest があれば複数ソース対応、無ければ従来パスへフォールバック。
+  // 古い gh-pages(manifest 未生成)とも互換を保つ。
+  function resolveSourcePaths() {
+    return fetchJson("./data/manifest.json")
+      .then((m) => {
+        if (!m || !Array.isArray(m.sources) || m.sources.length === 0) {
+          return ["./data/data.json"];
+        }
+        return m.sources
+          .map((s) => s && typeof s.path === "string" ? s.path : null)
+          .filter((p) => p !== null)
+          .map((p) => p.startsWith("./") || p.startsWith("/") ? p : `./${p}`);
+      })
+      .catch(() => ["./data/data.json"]);
+  }
+
+  resolveSourcePaths()
+    .then((paths) => Promise.all(
+      paths.map((p) => fetchJson(p).catch((err) => {
+        console.warn(`ghtrack: failed to load ${p}: ${err.message}`);
+        return { entries: [] };
+      })),
+    ))
+    .then((files) => {
+      const entries = files.flatMap((f) => Array.isArray(f && f.entries) ? f.entries : []);
       if (entries.length === 0) {
         replaceWithEmpty("totalChart", "No entries yet. Run the workflow at least once.");
         replaceWithEmpty("jobChart", "");
@@ -259,7 +314,7 @@
       buildJobChart(entries);
     })
     .catch((err) => {
-      replaceWithEmpty("totalChart", `Failed to load data/data.json: ${err.message}`);
+      replaceWithEmpty("totalChart", `Failed to load ghtrack data: ${err.message}`);
       replaceWithEmpty("jobChart", "");
     });
 })();

@@ -1,4 +1,5 @@
 export const SCHEMA_VERSION = 1 as const;
+export const MANIFEST_SCHEMA_VERSION = 1 as const;
 
 export interface StepEntry {
   name: string;
@@ -48,4 +49,18 @@ export interface Inputs {
 
 export function emptyDataFile(): DataFile {
   return { schema_version: SCHEMA_VERSION, entries: [] };
+}
+
+export interface ManifestSource {
+  path: string;
+  first_seen: number;
+}
+
+export interface Manifest {
+  schema_version: typeof MANIFEST_SCHEMA_VERSION;
+  sources: ManifestSource[];
+}
+
+export function emptyManifest(): Manifest {
+  return { schema_version: MANIFEST_SCHEMA_VERSION, sources: [] };
 }

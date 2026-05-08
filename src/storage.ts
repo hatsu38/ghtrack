@@ -5,6 +5,12 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { DataFile, Entry, Inputs } from "./types";
 import { SCHEMA_VERSION, emptyDataFile } from "./types";
+import {
+  MANIFEST_FILE_PATH,
+  buildInitialManifest,
+  ensureManifestEntry,
+  serializeManifest,
+} from "./manifest";
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -43,6 +49,12 @@ export async function writeEntryToGhPages(args: WriteEntryArgs): Promise<void> {
   }
 
   await appendWithRetry(args);
+  await ensureManifestEntry({
+    octokit: args.octokit,
+    owner: args.owner,
+    repo: args.repo,
+    inputs: args.inputs,
+  });
   await ensureIndexHtml(args);
 }
 
@@ -63,8 +75,9 @@ async function branchExistsOnRemote(args: WriteEntryArgs): Promise<boolean> {
 async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
   const initial = appendEntry(emptyDataFile(), args.entry, args.inputs.maxItemsInHistory);
   const indexHtml = await loadBundledIndexHtml();
+  const initialManifest = buildInitialManifest(args.inputs.dataFilePath);
 
-  const [dataBlob, htmlBlob] = await Promise.all([
+  const [dataBlob, htmlBlob, manifestBlob] = await Promise.all([
     args.octokit.rest.git.createBlob({
       owner: args.owner,
       repo: args.repo,
@@ -75,6 +88,12 @@ async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
       owner: args.owner,
       repo: args.repo,
       content: indexHtml.toString("base64"),
+      encoding: "base64",
+    }),
+    args.octokit.rest.git.createBlob({
+      owner: args.owner,
+      repo: args.repo,
+      content: Buffer.from(serializeManifest(initialManifest), "utf-8").toString("base64"),
       encoding: "base64",
     }),
   ]);
@@ -95,13 +114,19 @@ async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
         type: "blob",
         sha: htmlBlob.data.sha,
       },
+      {
+        path: MANIFEST_FILE_PATH,
+        mode: "100644",
+        type: "blob",
+        sha: manifestBlob.data.sha,
+      },
     ],
   });
 
   const commit = await args.octokit.rest.git.createCommit({
     owner: args.owner,
     repo: args.repo,
-    message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry and index.html`,
+    message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry, index.html, and manifest`,
     tree: tree.data.sha,
     parents: [], // orphan commit — gh-pages を main 履歴と分離する
     author: COMMITTER,
