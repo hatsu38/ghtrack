@@ -93,6 +93,38 @@ jobs:
 
 `duration_sec` が `null` のステップは未完了(自分自身を観測する都合で、`track` ジョブの最終 step は常に未完了として記録される)。
 
+## 複数 workflow から同一 repo に蓄積する
+
+`data-file-path` を workflow ごとに分けると、job 名が衝突しても 1 つのダッシュボードでまとめて閲覧できる。
+
+```yaml
+# .github/workflows/unit-test.yml
+- uses: hatsu38/ghtrack@<sha>
+  with:
+    data-file-path: data/unit-test.json
+
+# .github/workflows/e2e-likes.yml
+- uses: hatsu38/ghtrack@<sha>
+  with:
+    data-file-path: data/e2e-likes.json
+```
+
+このとき gh-pages 上には `data/manifest.json` が自動生成され、登録済みの全 path が記録される:
+
+```jsonc
+{
+  "schema_version": 1,
+  "sources": [
+    { "path": "data/unit-test.json", "first_seen": 1714397040000 },
+    { "path": "data/e2e-likes.json", "first_seen": 1714397100000 }
+  ]
+}
+```
+
+ダッシュボード(`index.html`)は manifest を読んで全 path を並列 fetch し、**workflow ごとに別 dataset** で描画する。Per-job チャートは `${workflow_file}::${job.name}` をキーに分離するので、`e2e_test` のような同名 job が複数 workflow に存在しても線が混ざらない。
+
+manifest が無い古い gh-pages では従来の `data/data.json` 単一読みにフォールバックするため、既存利用者の表示は壊れない。
+
 ## 可視化(GitHub Pages)
 
 Action は実行のたびに `gh-pages` branch の root に `index.html` を同梱(差分があれば自動同期)する。Chart.js v4 + date-fns adapter を CDN(jsDelivr)から読み込み、`fetch('./data/data.json')` でデータを取って 2 つの時系列グラフを描く構成:
