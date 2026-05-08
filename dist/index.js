@@ -30184,6 +30184,193 @@ run();
 
 /***/ }),
 
+/***/ 1685:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MANIFEST_FILE_PATH = void 0;
+exports.ensureManifestEntry = ensureManifestEntry;
+exports.serializeManifest = serializeManifest;
+exports.buildInitialManifest = buildInitialManifest;
+const core = __importStar(__nccwpck_require__(6966));
+const types_1 = __nccwpck_require__(7715);
+exports.MANIFEST_FILE_PATH = "data/manifest.json";
+const COMMITTER = {
+    name: "github-actions[bot]",
+    email: "41898282+github-actions[bot]@users.noreply.github.com",
+};
+const MAX_PUSH_ATTEMPTS = 5;
+const RETRY_BASE_DELAY_MS = 500;
+// 利用者が data-file-path を分けて複数 workflow から同一 repo に蓄積するケースを
+// dashboard が描画できるよう、自分の path を data/manifest.json に upsert する。
+// 既登録なら no-op で API call も発生しない。
+async function ensureManifestEntry(args) {
+    for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+        try {
+            const upserted = await upsertOnce(args);
+            if (!upserted) {
+                core.info(`Manifest already lists ${args.inputs.dataFilePath}; skipping write.`);
+            }
+            else {
+                core.info(`Updated ${exports.MANIFEST_FILE_PATH} with ${args.inputs.dataFilePath}.`);
+            }
+            return;
+        }
+        catch (err) {
+            const status = errorStatus(err);
+            const retryable = status === 409 || status === 422;
+            if (!retryable || attempt >= MAX_PUSH_ATTEMPTS)
+                throw err;
+            const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+            core.warning(`Manifest conflict (status=${status}) on attempt ${attempt}/${MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`);
+            await sleep(delay);
+        }
+    }
+}
+async function upsertOnce(args) {
+    const existing = await readManifest(args);
+    if (existing.manifest.sources.some((s) => s.path === args.inputs.dataFilePath)) {
+        return false;
+    }
+    const next = appendSource(existing.manifest, {
+        path: args.inputs.dataFilePath,
+        first_seen: Date.now(),
+    });
+    await args.octokit.rest.repos.createOrUpdateFileContents({
+        owner: args.owner,
+        repo: args.repo,
+        path: exports.MANIFEST_FILE_PATH,
+        branch: args.inputs.ghPagesBranch,
+        message: `chore(ghtrack): register ${args.inputs.dataFilePath} in manifest`,
+        content: Buffer.from(serializeManifest(next), "utf-8").toString("base64"),
+        sha: existing.fileSha ?? undefined,
+        author: COMMITTER,
+        committer: COMMITTER,
+    });
+    return true;
+}
+async function readManifest(args) {
+    try {
+        const res = await args.octokit.rest.repos.getContent({
+            owner: args.owner,
+            repo: args.repo,
+            path: exports.MANIFEST_FILE_PATH,
+            ref: args.inputs.ghPagesBranch,
+        });
+        if (Array.isArray(res.data)) {
+            throw new Error(`${exports.MANIFEST_FILE_PATH} is a directory, expected a file.`);
+        }
+        if (res.data.type !== "file") {
+            throw new Error(`${exports.MANIFEST_FILE_PATH} is not a regular file.`);
+        }
+        if (typeof res.data.content !== "string" || res.data.content.length === 0) {
+            throw new Error(`${exports.MANIFEST_FILE_PATH} content is empty or unreadable.`);
+        }
+        const text = Buffer.from(res.data.content, "base64").toString("utf-8");
+        return { manifest: parseManifest(text), fileSha: res.data.sha };
+    }
+    catch (err) {
+        if (errorStatus(err) === 404) {
+            return { manifest: (0, types_1.emptyManifest)(), fileSha: null };
+        }
+        throw err;
+    }
+}
+function parseManifest(text) {
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch (e) {
+        throw new Error(`Existing manifest is not valid JSON: ${e.message}`);
+    }
+    if (!isManifest(parsed)) {
+        throw new Error(`Existing manifest does not match the expected schema (schema_version=${types_1.MANIFEST_SCHEMA_VERSION}).`);
+    }
+    return parsed;
+}
+function isManifest(value) {
+    if (typeof value !== "object" || value === null)
+        return false;
+    const candidate = value;
+    if (candidate.schema_version !== types_1.MANIFEST_SCHEMA_VERSION)
+        return false;
+    if (!Array.isArray(candidate.sources))
+        return false;
+    return candidate.sources.every(isManifestSource);
+}
+function isManifestSource(value) {
+    if (typeof value !== "object" || value === null)
+        return false;
+    const candidate = value;
+    return (typeof candidate.path === "string" &&
+        typeof candidate.first_seen === "number");
+}
+function appendSource(manifest, source) {
+    return {
+        schema_version: types_1.MANIFEST_SCHEMA_VERSION,
+        sources: [...manifest.sources, source],
+    };
+}
+function serializeManifest(manifest) {
+    return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+function buildInitialManifest(dataFilePath) {
+    return appendSource((0, types_1.emptyManifest)(), {
+        path: dataFilePath,
+        first_seen: Date.now(),
+    });
+}
+function errorStatus(err) {
+    if (err && typeof err === "object" && "status" in err) {
+        const status = err.status;
+        if (typeof status === "number")
+            return status;
+    }
+    return null;
+}
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+/***/ }),
+
 /***/ 3327:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30229,6 +30416,7 @@ const crypto = __importStar(__nccwpck_require__(7598));
 const fs = __importStar(__nccwpck_require__(1455));
 const path = __importStar(__nccwpck_require__(6760));
 const types_1 = __nccwpck_require__(7715);
+const manifest_1 = __nccwpck_require__(1685);
 const COMMITTER = {
     name: "github-actions[bot]",
     email: "41898282+github-actions[bot]@users.noreply.github.com",
@@ -30250,6 +30438,12 @@ async function writeEntryToGhPages(args) {
         // race condition: branch was concurrently created → fall through to update flow
     }
     await appendWithRetry(args);
+    await (0, manifest_1.ensureManifestEntry)({
+        octokit: args.octokit,
+        owner: args.owner,
+        repo: args.repo,
+        inputs: args.inputs,
+    });
     await ensureIndexHtml(args);
 }
 async function branchExistsOnRemote(args) {
@@ -30270,7 +30464,8 @@ async function branchExistsOnRemote(args) {
 async function bootstrapBranch(args) {
     const initial = appendEntry((0, types_1.emptyDataFile)(), args.entry, args.inputs.maxItemsInHistory);
     const indexHtml = await loadBundledIndexHtml();
-    const [dataBlob, htmlBlob] = await Promise.all([
+    const initialManifest = (0, manifest_1.buildInitialManifest)(args.inputs.dataFilePath);
+    const [dataBlob, htmlBlob, manifestBlob] = await Promise.all([
         args.octokit.rest.git.createBlob({
             owner: args.owner,
             repo: args.repo,
@@ -30281,6 +30476,12 @@ async function bootstrapBranch(args) {
             owner: args.owner,
             repo: args.repo,
             content: indexHtml.toString("base64"),
+            encoding: "base64",
+        }),
+        args.octokit.rest.git.createBlob({
+            owner: args.owner,
+            repo: args.repo,
+            content: Buffer.from((0, manifest_1.serializeManifest)(initialManifest), "utf-8").toString("base64"),
             encoding: "base64",
         }),
     ]);
@@ -30300,12 +30501,18 @@ async function bootstrapBranch(args) {
                 type: "blob",
                 sha: htmlBlob.data.sha,
             },
+            {
+                path: manifest_1.MANIFEST_FILE_PATH,
+                mode: "100644",
+                type: "blob",
+                sha: manifestBlob.data.sha,
+            },
         ],
     });
     const commit = await args.octokit.rest.git.createCommit({
         owner: args.owner,
         repo: args.repo,
-        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry and index.html`,
+        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry, index.html, and manifest`,
         tree: tree.data.sha,
         parents: [], // orphan commit — gh-pages を main 履歴と分離する
         author: COMMITTER,
@@ -30517,11 +30724,16 @@ function sleep(ms) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SCHEMA_VERSION = void 0;
+exports.MANIFEST_SCHEMA_VERSION = exports.SCHEMA_VERSION = void 0;
 exports.emptyDataFile = emptyDataFile;
+exports.emptyManifest = emptyManifest;
 exports.SCHEMA_VERSION = 1;
+exports.MANIFEST_SCHEMA_VERSION = 1;
 function emptyDataFile() {
     return { schema_version: exports.SCHEMA_VERSION, entries: [] };
+}
+function emptyManifest() {
+    return { schema_version: exports.MANIFEST_SCHEMA_VERSION, sources: [] };
 }
 
 
