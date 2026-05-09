@@ -188,6 +188,13 @@
       matrix を集約 (max) して表示
     </label>
     <label>
+      内訳:
+      <select id="breakdownLevel">
+        <option value="jobs">Jobs</option>
+        <option value="steps">Steps</option>
+      </select>
+    </label>
+    <label>
       期間:
       <select id="rangePreset">
         <option value="all">All time</option>
@@ -235,17 +242,10 @@
 
   const GROUP_MATRIX_STORAGE_KEY = "ghtrack:groupMatrix";
   function getMatrixGrouping() {
-    try {
-      const v = localStorage.getItem(GROUP_MATRIX_STORAGE_KEY);
-      return v === null ? true : v === "true";
-    } catch (_) {
-      return true;
-    }
+    return lsGet(GROUP_MATRIX_STORAGE_KEY, "true") === "true";
   }
   function setMatrixGrouping(value) {
-    try {
-      localStorage.setItem(GROUP_MATRIX_STORAGE_KEY, value ? "true" : "false");
-    } catch (_) { /* private mode 等で無視 */ }
+    lsSet(GROUP_MATRIX_STORAGE_KEY, value ? "true" : "false");
   }
 
   // 失敗扱いする conclusion。cancelled / neutral / null は集計対象外。
@@ -274,7 +274,14 @@
   const RANGE_PRESET_KEY = "ghtrack:rangePreset";
   const RANGE_FROM_KEY = "ghtrack:rangeFrom";
   const RANGE_TO_KEY = "ghtrack:rangeTo";
+  const BREAKDOWN_LEVEL_KEY = "ghtrack:breakdownLevel";
   const DAY_MS = 86400000;
+  const OTHER_COLOR = "#8b949e";
+
+  function getBreakdownLevel() {
+    const v = lsGet(BREAKDOWN_LEVEL_KEY, "jobs");
+    return v === "steps" ? "steps" : "jobs";
+  }
 
   function lsGet(key, fallback) {
     try {
@@ -506,6 +513,143 @@
     }
   }
 
+  // 1 entry の中で segment(job または step) ごとの duration を集約する。
+  // matrix 集約 ON のときは groupKeyFor で集約し、同一 key の中では max を取る
+  // (並列 matrix node の wall-clock を代表させる既存ロジックに合わせる)。
+  function entrySegments(entry, level, groupMatrix) {
+    const acc = new Map();
+    if (level === "steps") {
+      for (const j of entry.jobs) {
+        if (!j.steps) continue;
+        const jobKey = groupKeyFor(j.name, groupMatrix);
+        for (const s of j.steps) {
+          if (typeof s.duration_sec !== "number") continue;
+          const key = `${s.name} — ${jobKey}`;
+          acc.set(key, Math.max(acc.get(key) || 0, s.duration_sec));
+        }
+      }
+      return acc;
+    }
+    for (const j of entry.jobs) {
+      if (typeof j.duration_sec !== "number") continue;
+      const key = groupKeyFor(j.name, groupMatrix);
+      acc.set(key, Math.max(acc.get(key) || 0, j.duration_sec));
+    }
+    return acc;
+  }
+
+  function stackedBarOptions(tooltipExtra) {
+    const opts = chartOptions(tooltipExtra);
+    opts.scales.x.stacked = true;
+    opts.scales.y.stacked = true;
+    opts.scales.x.offset = true;
+    // bar 上をホバーしたときにその segment 単体の tooltip を出したい
+    opts.interaction = { mode: "nearest", axis: "x", intersect: true };
+    return opts;
+  }
+
+  function buildBreakdownChart(entries, canvasId, metaId, level, groupMatrix, emptyMessage) {
+    const setMeta = (text) => {
+      const m = metaId ? document.getElementById(metaId) : null;
+      if (m) m.textContent = text;
+    };
+
+    if (entries.length === 0) {
+      replaceWithEmpty(canvasId, emptyMessage || "No runs to break down.");
+      setMeta("");
+      return;
+    }
+
+    const perEntry = entries.map((e) => entrySegments(e, level, groupMatrix));
+    const totals = new Map();
+    for (const segMap of perEntry) {
+      for (const [k, v] of segMap) {
+        totals.set(k, (totals.get(k) || 0) + v);
+      }
+    }
+    if (totals.size === 0) {
+      replaceWithEmpty(canvasId,
+        level === "steps"
+          ? "No step duration recorded yet."
+          : "No job duration recorded yet.");
+      setMeta("");
+      return;
+    }
+
+    const canvas = prepareCanvas(canvasId);
+    if (!canvas) return;
+
+    // Top N + その他 を集約。N は palette 色数に揃えて凡例の色被りを防ぐ。
+    const TOP_N = PALETTE.length;
+    const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+    const topKeys = sorted.slice(0, TOP_N).map(([k]) => k);
+    const otherKeys = sorted.slice(TOP_N).map(([k]) => k);
+    const hasOther = otherKeys.length > 0;
+
+    const datasets = topKeys.map((key, i) => {
+      const color = colorAt(i);
+      return {
+        label: key,
+        data: entries.map((entry, idx) => ({
+          x: entry.date,
+          y: perEntry[idx].get(key) || 0,
+          raw: entry,
+          segName: key,
+        })),
+        backgroundColor: color,
+        borderColor: color,
+        borderWidth: 0,
+        stack: "duration",
+      };
+    });
+    if (hasOther) {
+      const topSet = new Set(topKeys);
+      datasets.push({
+        label: `other (${otherKeys.length})`,
+        data: entries.map((entry, idx) => {
+          let sum = 0;
+          for (const [k, v] of perEntry[idx]) {
+            if (!topSet.has(k)) sum += v;
+          }
+          return {
+            x: entry.date,
+            y: sum,
+            raw: entry,
+            segName: "other",
+            otherCount: otherKeys.length,
+          };
+        }),
+        backgroundColor: OTHER_COLOR,
+        borderColor: OTHER_COLOR,
+        borderWidth: 0,
+        stack: "duration",
+      });
+    }
+
+    new Chart(canvas, {
+      type: "bar",
+      data: { datasets },
+      options: stackedBarOptions((point) => {
+        if (!point || !point.raw) return [];
+        const lines = [`commit ${String(point.raw.commit).slice(0, 7)}`];
+        if (point.segName === "other") {
+          lines.push(`other: ${point.otherCount} ${level} grouped`);
+        } else {
+          lines.push(`${level === "steps" ? "step" : "job"}: ${point.segName}`);
+        }
+        lines.push(`duration: ${Math.round(point.y)}s`);
+        return lines;
+      }),
+    });
+
+    const noteParts = [];
+    if (hasOther) noteParts.push(`top ${topKeys.length} of ${totals.size} ${level}`);
+    else noteParts.push(`${totals.size} ${level}`);
+    if (groupMatrix) noteParts.push("matrix aggregated");
+    noteParts.push("並列実行のため Total Duration とは一致しません");
+    setMeta(noteParts.join(" · ") + ".");
+  }
+
   function appendBadge(parent, kind, text) {
     const span = document.createElement("span");
     span.className = `badge ${kind}`;
@@ -573,6 +717,8 @@
     const jobCanvasId = `job-${idx}`;
     const jobMetaId = `job-meta-${idx}`;
     const summaryId = `summary-${idx}`;
+    const breakdownCanvasId = `breakdown-${idx}`;
+    const breakdownMetaId = `breakdown-meta-${idx}`;
 
     const section = document.createElement("section");
     section.className = "source";
@@ -607,6 +753,22 @@
     totalWrap.appendChild(totalCanvas);
     section.appendChild(totalWrap);
 
+    const breakdownH3 = document.createElement("h3");
+    breakdownH3.textContent = "Duration breakdown (cumulative)";
+    section.appendChild(breakdownH3);
+
+    const breakdownWrap = document.createElement("div");
+    breakdownWrap.className = "chart-wrap";
+    const breakdownCanvas = document.createElement("canvas");
+    breakdownCanvas.id = breakdownCanvasId;
+    breakdownWrap.appendChild(breakdownCanvas);
+    section.appendChild(breakdownWrap);
+
+    const breakdownMeta = document.createElement("p");
+    breakdownMeta.className = "meta";
+    breakdownMeta.id = breakdownMetaId;
+    section.appendChild(breakdownMeta);
+
     const jobH3 = document.createElement("h3");
     jobH3.textContent = "Per-job duration";
     section.appendChild(jobH3);
@@ -625,7 +787,15 @@
 
     container.appendChild(section);
 
-    return { source, totalCanvasId, jobCanvasId, jobMetaId, summaryId };
+    return {
+      source,
+      totalCanvasId,
+      jobCanvasId,
+      jobMetaId,
+      summaryId,
+      breakdownCanvasId,
+      breakdownMetaId,
+    };
   }
 
   function fetchJson(path) {
@@ -687,6 +857,7 @@
 
       const renderAllCharts = () => {
         const groupMatrix = getMatrixGrouping();
+        const level = getBreakdownLevel();
         const range = getActiveRange();
         const hasFilter = range.from !== null || range.to !== null;
         const emptyMsg = hasFilter ? "No runs in selected range." : null;
@@ -694,6 +865,7 @@
           const filtered = filterByRange(t.source.entries, range);
           renderSummary(filtered, t.summaryId, hasFilter);
           buildTotalChart(filtered, t.totalCanvasId, emptyMsg);
+          buildBreakdownChart(filtered, t.breakdownCanvasId, t.breakdownMetaId, level, groupMatrix, emptyMsg);
           buildJobChart(filtered, t.jobCanvasId, t.jobMetaId, groupMatrix, emptyMsg);
         }
       };
@@ -703,6 +875,15 @@
         toggle.checked = getMatrixGrouping();
         toggle.addEventListener("change", () => {
           setMatrixGrouping(toggle.checked);
+          renderAllCharts();
+        });
+      }
+
+      const breakdownSelect = document.getElementById("breakdownLevel");
+      if (breakdownSelect) {
+        breakdownSelect.value = getBreakdownLevel();
+        breakdownSelect.addEventListener("change", () => {
+          lsSet(BREAKDOWN_LEVEL_KEY, breakdownSelect.value);
           renderAllCharts();
         });
       }
