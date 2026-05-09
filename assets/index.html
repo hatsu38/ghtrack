@@ -67,6 +67,46 @@
 
     .source-meta { color: var(--muted); font-size: 13px; margin: 0; }
 
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 10px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .summary .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 12px;
+      border: 1px solid transparent;
+    }
+    .summary .badge.success {
+      background: rgba(63, 185, 80, 0.16);
+      color: #1a7f37;
+      border-color: rgba(63, 185, 80, 0.35);
+    }
+    .summary .badge.failure {
+      background: rgba(207, 34, 46, 0.16);
+      color: #cf222e;
+      border-color: rgba(207, 34, 46, 0.35);
+    }
+    .summary .badge.neutral {
+      background: var(--card);
+      color: var(--muted);
+      border-color: var(--border);
+    }
+    .summary .rate { font-weight: 600; color: var(--fg); }
+    @media (prefers-color-scheme: dark) {
+      .summary .badge.success { color: #56d364; }
+      .summary .badge.failure { color: #ff7b72; }
+    }
+
     .chart-wrap {
       position: relative;
       height: 300px;
@@ -93,6 +133,10 @@
     }
 
     .global-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 20px;
       margin: 0 0 24px;
       color: var(--muted);
       font-size: 13px;
@@ -105,6 +149,21 @@
       user-select: none;
     }
     .global-controls input[type="checkbox"] { cursor: pointer; }
+    .global-controls select,
+    .global-controls input[type="date"] {
+      font: inherit;
+      color: inherit;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 6px;
+    }
+    .global-controls .custom-range {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .global-controls .custom-range[hidden] { display: none; }
 
     footer {
       margin-top: 48px;
@@ -128,6 +187,21 @@
       <input type="checkbox" id="groupMatrixToggle">
       matrix を集約 (max) して表示
     </label>
+    <label>
+      期間:
+      <select id="rangePreset">
+        <option value="all">All time</option>
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="90d">Last 90 days</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </label>
+    <span class="custom-range" id="customRange" hidden>
+      <input type="date" id="rangeFrom" aria-label="from">
+      <span>–</span>
+      <input type="date" id="rangeTo" aria-label="to">
+    </span>
   </div>
 
   <div id="sources"></div>
@@ -174,6 +248,75 @@
     } catch (_) { /* private mode 等で無視 */ }
   }
 
+  // 失敗扱いする conclusion。cancelled / neutral / null は集計対象外。
+  const FAIL_CONCLUSIONS = new Set(["failure", "timed_out"]);
+  const FAIL_COLOR = "#cf222e";
+
+  function isFailJob(job) {
+    return !!job && FAIL_CONCLUSIONS.has(job.conclusion);
+  }
+
+  // jobs を集約して run の成否を導く。
+  // 失敗系が 1 件でもあれば failure、全部 success なら success、
+  // それ以外（cancelled / neutral / null だけ）は other。
+  function deriveRunConclusion(entry) {
+    let hasFail = false;
+    let hasSuccess = false;
+    for (const j of entry.jobs) {
+      if (FAIL_CONCLUSIONS.has(j.conclusion)) hasFail = true;
+      else if (j.conclusion === "success") hasSuccess = true;
+    }
+    if (hasFail) return "failure";
+    if (hasSuccess) return "success";
+    return "other";
+  }
+
+  const RANGE_PRESET_KEY = "ghtrack:rangePreset";
+  const RANGE_FROM_KEY = "ghtrack:rangeFrom";
+  const RANGE_TO_KEY = "ghtrack:rangeTo";
+  const DAY_MS = 86400000;
+
+  function lsGet(key, fallback) {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v;
+    } catch (_) { return fallback; }
+  }
+  function lsSet(key, value) {
+    try {
+      if (value === null || value === "") localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (_) { /* ignore */ }
+  }
+
+  // preset / from / to から実際の数値範囲を返す。null は未指定。
+  function getActiveRange() {
+    const preset = lsGet(RANGE_PRESET_KEY, "all");
+    const now = Date.now();
+    if (preset === "7d") return { from: now - 7 * DAY_MS, to: null };
+    if (preset === "30d") return { from: now - 30 * DAY_MS, to: null };
+    if (preset === "90d") return { from: now - 90 * DAY_MS, to: null };
+    if (preset === "custom") {
+      const f = lsGet(RANGE_FROM_KEY, "");
+      const t = lsGet(RANGE_TO_KEY, "");
+      const fromMs = f ? new Date(f + "T00:00:00").getTime() : null;
+      // to は終日含めるため翌日 0:00 - 1ms を上限にする
+      const toMs = t ? new Date(t + "T00:00:00").getTime() + DAY_MS - 1 : null;
+      return {
+        from: Number.isFinite(fromMs) ? fromMs : null,
+        to: Number.isFinite(toMs) ? toMs : null,
+      };
+    }
+    return { from: null, to: null };
+  }
+
+  function filterByRange(entries, range) {
+    if (range.from === null && range.to === null) return entries;
+    return entries.filter((e) =>
+      (range.from === null || e.date >= range.from) &&
+      (range.to === null || e.date <= range.to));
+  }
+
   function chartOptions(tooltipExtra) {
     return {
       responsive: true,
@@ -205,30 +348,43 @@
     };
   }
 
-  function destroyChartOn(canvasId) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return null;
-    const existing = Chart.getChart && Chart.getChart(canvas);
-    if (existing) existing.destroy();
+  // canvas を取得し、bind 済み Chart があれば破棄する。
+  // 直前に replaceWithEmpty で empty div に差し変わっていた場合は canvas を作り直す。
+  function prepareCanvas(canvasId) {
+    const el = document.getElementById(canvasId);
+    if (!el) return null;
+    if (el.tagName === "CANVAS") {
+      const existing = Chart.getChart && Chart.getChart(el);
+      if (existing) existing.destroy();
+      return el;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.id = canvasId;
+    el.parentNode.replaceChild(canvas, el);
     return canvas;
   }
 
   function replaceWithEmpty(canvasId, message) {
     const el = document.getElementById(canvasId);
     if (!el) return;
+    if (el.tagName === "CANVAS" && Chart.getChart) {
+      const existing = Chart.getChart(el);
+      if (existing) existing.destroy();
+    }
     const div = document.createElement("div");
     div.className = "empty";
+    div.id = canvasId;
     div.textContent = message;
     el.parentNode.replaceChild(div, el);
   }
 
-  function buildTotalChart(entries, canvasId) {
+  function buildTotalChart(entries, canvasId, emptyMessage) {
     const usable = entries.filter((e) => typeof e.total_duration_sec === "number");
     if (usable.length === 0) {
-      replaceWithEmpty(canvasId, "No total_duration_sec recorded yet.");
+      replaceWithEmpty(canvasId, emptyMessage || "No total_duration_sec recorded yet.");
       return;
     }
-    const canvas = destroyChartOn(canvasId);
+    const canvas = prepareCanvas(canvasId);
     if (!canvas) return;
     const color = colorAt(0);
     new Chart(canvas, {
@@ -256,10 +412,7 @@
     });
   }
 
-  function buildJobChart(entries, canvasId, metaId, groupMatrix) {
-    const canvas = destroyChartOn(canvasId);
-    if (!canvas) return;
-
+  function buildJobChart(entries, canvasId, metaId, groupMatrix, emptyMessage) {
     // entry ごとに groupName → matching jobs の Map を一度だけ作る。
     // 後続の dataset 構築で `groupKeyFor` 再評価と二重 filter を避ける。
     const groupNames = new Set();
@@ -274,9 +427,13 @@
       return { entry, byGroup };
     });
     if (groupNames.size === 0) {
-      replaceWithEmpty(canvasId, "No jobs recorded yet.");
+      replaceWithEmpty(canvasId, emptyMessage || "No jobs recorded yet.");
+      const metaEl = metaId ? document.getElementById(metaId) : null;
+      if (metaEl) metaEl.textContent = "";
       return;
     }
+    const canvas = prepareCanvas(canvasId);
+    if (!canvas) return;
 
     const datasets = [...groupNames].map((groupName, i) => {
       const data = perEntry
@@ -289,17 +446,22 @@
           const slowest = withDuration.reduce(
             (a, b) => (a.duration_sec >= b.duration_sec ? a : b),
           );
+          // matrix 内に 1 つでも失敗があれば、その point は失敗扱いにする
+          const failingJob = matched.find(isFailJob) || null;
           return {
             x: entry.date,
             y: slowest.duration_sec,
             raw: entry,
             jobRaw: slowest,
+            failingJob,
             matrixCount: matched.length,
             groupName,
           };
         })
         .filter((p) => p !== null);
       const color = colorAt(i);
+      const pointColors = data.map((p) => (p.failingJob ? FAIL_COLOR : color));
+      const pointRadii = data.map((p) => (p.failingJob ? 5 : 3));
       return {
         label: groupName,
         data,
@@ -307,7 +469,10 @@
         backgroundColor: color + "22",
         tension: 0.25,
         spanGaps: true,
-        pointRadius: 3,
+        pointRadius: pointRadii,
+        pointHoverRadius: pointRadii.map((r) => r + 2),
+        pointBackgroundColor: pointColors,
+        pointBorderColor: pointColors,
       };
     });
 
@@ -325,6 +490,10 @@
         }
         lines.push(`commit ${String(point.raw.commit).slice(0, 7)}`);
         lines.push(`conclusion: ${point.jobRaw.conclusion ?? "-"}`);
+        // matrix 内で slowest 以外が失敗していたら明示
+        if (point.failingJob && point.failingJob !== point.jobRaw) {
+          lines.push(`failed in: ${point.failingJob.name} (${point.failingJob.conclusion})`);
+        }
         return lines;
       }),
     });
@@ -337,6 +506,63 @@
     }
   }
 
+  function appendBadge(parent, kind, text) {
+    const span = document.createElement("span");
+    span.className = `badge ${kind}`;
+    span.textContent = text;
+    parent.appendChild(span);
+  }
+
+  // 母数 = success + failure。cancelled / neutral / null は other としてカウントだけする。
+  function summarizeRuns(entries) {
+    let success = 0, failure = 0, other = 0;
+    for (const e of entries) {
+      const c = deriveRunConclusion(e);
+      if (c === "success") success++;
+      else if (c === "failure") failure++;
+      else other++;
+    }
+    return { success, failure, other, total: entries.length };
+  }
+
+  function renderSummary(entries, summaryId, hasFilter) {
+    const el = document.getElementById(summaryId);
+    if (!el) return;
+    el.innerHTML = "";
+
+    if (entries.length === 0) {
+      appendBadge(el, "neutral",
+        hasFilter ? "No runs in selected range" : "No runs yet");
+      return;
+    }
+
+    const { success, failure, other, total } = summarizeRuns(entries);
+    const counted = success + failure;
+
+    if (counted === 0) {
+      appendBadge(el, "neutral", `${total} runs (no conclusion recorded)`);
+      return;
+    }
+
+    if (failure === 0) {
+      appendBadge(el, "success", `all ${counted} runs succeeded`);
+    } else {
+      appendBadge(el, "success", `${success} success`);
+      appendBadge(el, "failure", `${failure} failure`);
+      const rate = ((success / counted) * 100).toFixed(1);
+      const rateEl = document.createElement("span");
+      rateEl.className = "rate";
+      rateEl.textContent = `success rate ${rate}%`;
+      el.appendChild(rateEl);
+    }
+
+    if (other > 0) {
+      const info = document.createElement("span");
+      info.textContent = `(${other} excluded — cancelled / neutral)`;
+      el.appendChild(info);
+    }
+  }
+
   function deriveSourceTitle(source) {
     const e = source.entries[0];
     return e.workflow || e.workflow_file || source.path;
@@ -346,6 +572,7 @@
     const totalCanvasId = `total-${idx}`;
     const jobCanvasId = `job-${idx}`;
     const jobMetaId = `job-meta-${idx}`;
+    const summaryId = `summary-${idx}`;
 
     const section = document.createElement("section");
     section.className = "source";
@@ -363,6 +590,11 @@
       `${source.path} · ${source.entries.length} run(s)` +
       (latest ? ` (latest: ${latest})` : "");
     section.appendChild(meta);
+
+    const summary = document.createElement("div");
+    summary.className = "summary";
+    summary.id = summaryId;
+    section.appendChild(summary);
 
     const totalH3 = document.createElement("h3");
     totalH3.textContent = "Total duration per run";
@@ -393,8 +625,7 @@
 
     container.appendChild(section);
 
-    buildTotalChart(source.entries, totalCanvasId);
-    return { source, jobCanvasId, jobMetaId };
+    return { source, totalCanvasId, jobCanvasId, jobMetaId, summaryId };
   }
 
   function fetchJson(path) {
@@ -448,16 +679,22 @@
         return;
       }
 
-      const jobChartTargets = [];
+      const chartTargets = [];
       populated.forEach((source, i) => {
         const target = renderSourceSection(source, i, container);
-        if (target) jobChartTargets.push(target);
+        if (target) chartTargets.push(target);
       });
 
-      const renderAllJobCharts = () => {
+      const renderAllCharts = () => {
         const groupMatrix = getMatrixGrouping();
-        for (const t of jobChartTargets) {
-          buildJobChart(t.source.entries, t.jobCanvasId, t.jobMetaId, groupMatrix);
+        const range = getActiveRange();
+        const hasFilter = range.from !== null || range.to !== null;
+        const emptyMsg = hasFilter ? "No runs in selected range." : null;
+        for (const t of chartTargets) {
+          const filtered = filterByRange(t.source.entries, range);
+          renderSummary(filtered, t.summaryId, hasFilter);
+          buildTotalChart(filtered, t.totalCanvasId, emptyMsg);
+          buildJobChart(filtered, t.jobCanvasId, t.jobMetaId, groupMatrix, emptyMsg);
         }
       };
 
@@ -466,10 +703,43 @@
         toggle.checked = getMatrixGrouping();
         toggle.addEventListener("change", () => {
           setMatrixGrouping(toggle.checked);
-          renderAllJobCharts();
+          renderAllCharts();
         });
       }
-      renderAllJobCharts();
+
+      const rangePreset = document.getElementById("rangePreset");
+      const customRange = document.getElementById("customRange");
+      const rangeFrom = document.getElementById("rangeFrom");
+      const rangeTo = document.getElementById("rangeTo");
+      const updateCustomVisibility = (preset) => {
+        if (customRange) customRange.hidden = preset !== "custom";
+      };
+      if (rangePreset) {
+        const initial = lsGet(RANGE_PRESET_KEY, "all");
+        rangePreset.value = initial;
+        updateCustomVisibility(initial);
+        rangePreset.addEventListener("change", () => {
+          lsSet(RANGE_PRESET_KEY, rangePreset.value);
+          updateCustomVisibility(rangePreset.value);
+          renderAllCharts();
+        });
+      }
+      if (rangeFrom) {
+        rangeFrom.value = lsGet(RANGE_FROM_KEY, "");
+        rangeFrom.addEventListener("change", () => {
+          lsSet(RANGE_FROM_KEY, rangeFrom.value);
+          renderAllCharts();
+        });
+      }
+      if (rangeTo) {
+        rangeTo.value = lsGet(RANGE_TO_KEY, "");
+        rangeTo.addEventListener("change", () => {
+          lsSet(RANGE_TO_KEY, rangeTo.value);
+          renderAllCharts();
+        });
+      }
+
+      renderAllCharts();
     })
     .catch((err) => {
       const container = document.getElementById("sources");
