@@ -910,12 +910,12 @@
         const emptyMsg = hasFilter
           ? t("No runs in selected range.", "選択した期間に該当する run がありません。")
           : null;
-        for (const t of chartTargets) {
-          const filtered = filterByRange(t.source.entries, range);
-          renderSummary(filtered, t.summaryId, hasFilter);
-          buildTotalChart(filtered, t.totalCanvasId, emptyMsg);
-          buildBreakdownChart(filtered, t.breakdownCanvasId, t.breakdownMetaId, level, groupMatrix, emptyMsg);
-          buildJobChart(filtered, t.jobCanvasId, t.jobMetaId, groupMatrix, emptyMsg);
+        for (const target of chartTargets) {
+          const filtered = filterByRange(target.source.entries, range);
+          renderSummary(filtered, target.summaryId, hasFilter);
+          buildTotalChart(filtered, target.totalCanvasId, emptyMsg);
+          buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, emptyMsg);
+          buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
         }
       };
 
