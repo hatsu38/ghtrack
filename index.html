@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -179,29 +179,29 @@
 <main>
   <header>
     <h1><a href="https://github.com/hatsu38/ghtrack">ghtrack</a></h1>
-    <p class="subtitle">Workflow run duration trends, captured by ghtrack.</p>
+    <p class="subtitle" data-i18n="subtitle">Workflow run duration trends, captured by ghtrack.</p>
   </header>
 
   <div class="global-controls">
     <label>
       <input type="checkbox" id="groupMatrixToggle">
-      matrix を集約 (max) して表示
+      <span data-i18n="aggregateMatrix">Aggregate matrix (max)</span>
     </label>
     <label>
-      内訳:
+      <span data-i18n="breakdownLabel">Breakdown:</span>
       <select id="breakdownLevel">
         <option value="jobs">Jobs</option>
         <option value="steps">Steps</option>
       </select>
     </label>
     <label>
-      期間:
+      <span data-i18n="rangeLabel">Range:</span>
       <select id="rangePreset">
-        <option value="all">All time</option>
-        <option value="7d">Last 7 days</option>
-        <option value="30d">Last 30 days</option>
-        <option value="90d">Last 90 days</option>
-        <option value="custom">Custom…</option>
+        <option value="all" data-i18n="rangeAll">All time</option>
+        <option value="7d" data-i18n="range7d">Last 7 days</option>
+        <option value="30d" data-i18n="range30d">Last 30 days</option>
+        <option value="90d" data-i18n="range90d">Last 90 days</option>
+        <option value="custom" data-i18n="rangeCustom">Custom…</option>
       </select>
     </label>
     <span class="custom-range" id="customRange" hidden>
@@ -224,6 +224,34 @@
 <script>
 (function () {
   "use strict";
+
+  const LOCALE_JA = (typeof navigator !== "undefined" &&
+    String(navigator.language || "").toLowerCase().startsWith("ja"));
+  function t(en, ja) { return LOCALE_JA ? ja : en; }
+  if (typeof document !== "undefined" && document.documentElement) {
+    document.documentElement.lang = LOCALE_JA ? "ja" : "en";
+  }
+
+  const I18N_JA = {
+    subtitle: "ghtrack で記録した workflow の実行時間トレンド。",
+    aggregateMatrix: "matrix を集約 (max) して表示",
+    breakdownLabel: "内訳:",
+    rangeLabel: "期間:",
+    rangeAll: "全期間",
+    range7d: "直近 7 日",
+    range30d: "直近 30 日",
+    range90d: "直近 90 日",
+    rangeCustom: "カスタム…",
+  };
+  function applyStaticI18n() {
+    if (!LOCALE_JA) return;
+    const els = document.querySelectorAll("[data-i18n]");
+    for (const el of els) {
+      const ja = I18N_JA[el.dataset.i18n];
+      if (ja) el.textContent = ja;
+    }
+  }
+  applyStaticI18n();
 
   const PALETTE = [
     "#1f6feb", "#bf8700", "#bc4c00", "#3fb950",
@@ -388,7 +416,9 @@
   function buildTotalChart(entries, canvasId, emptyMessage) {
     const usable = entries.filter((e) => typeof e.total_duration_sec === "number");
     if (usable.length === 0) {
-      replaceWithEmpty(canvasId, emptyMessage || "No total_duration_sec recorded yet.");
+      replaceWithEmpty(canvasId, emptyMessage ||
+        t("No total_duration_sec recorded yet.",
+          "total_duration_sec が記録されていません。"));
       return;
     }
     const canvas = prepareCanvas(canvasId);
@@ -434,7 +464,8 @@
       return { entry, byGroup };
     });
     if (groupNames.size === 0) {
-      replaceWithEmpty(canvasId, emptyMessage || "No jobs recorded yet.");
+      replaceWithEmpty(canvasId, emptyMessage ||
+        t("No jobs recorded yet.", "Job がまだ記録されていません。"));
       const metaEl = metaId ? document.getElementById(metaId) : null;
       if (metaEl) metaEl.textContent = "";
       return;
@@ -555,7 +586,8 @@
     };
 
     if (entries.length === 0) {
-      replaceWithEmpty(canvasId, emptyMessage || "No runs to break down.");
+      replaceWithEmpty(canvasId, emptyMessage ||
+        t("No runs to break down.", "内訳を表示できる run がありません。"));
       setMeta("");
       return;
     }
@@ -570,8 +602,10 @@
     if (totals.size === 0) {
       replaceWithEmpty(canvasId,
         level === "steps"
-          ? "No step duration recorded yet."
-          : "No job duration recorded yet.");
+          ? t("No step duration recorded yet.",
+              "Step の実行時間がまだ記録されていません。")
+          : t("No job duration recorded yet.",
+              "Job の実行時間がまだ記録されていません。"));
       setMeta("");
       return;
     }
@@ -646,7 +680,9 @@
     if (hasOther) noteParts.push(`top ${topKeys.length} of ${totals.size} ${level}`);
     else noteParts.push(`${totals.size} ${level}`);
     if (groupMatrix) noteParts.push("matrix aggregated");
-    noteParts.push("並列実行のため Total Duration とは一致しません");
+    noteParts.push(t(
+      "stacks may exceed Total due to parallel execution",
+      "並列実行のため Total Duration とは一致しません"));
     setMeta(noteParts.join(" · ") + ".");
   }
 
@@ -675,8 +711,9 @@
     el.innerHTML = "";
 
     if (entries.length === 0) {
-      appendBadge(el, "neutral",
-        hasFilter ? "No runs in selected range" : "No runs yet");
+      appendBadge(el, "neutral", hasFilter
+        ? t("No runs in selected range", "選択した期間に該当する run がありません")
+        : t("No runs yet", "まだ run がありません"));
       return;
     }
 
@@ -684,25 +721,33 @@
     const counted = success + failure;
 
     if (counted === 0) {
-      appendBadge(el, "neutral", `${total} runs (no conclusion recorded)`);
+      appendBadge(el, "neutral",
+        t(`${total} runs (no conclusion recorded)`,
+          `${total} runs (conclusion 未記録)`));
       return;
     }
 
     if (failure === 0) {
-      appendBadge(el, "success", `all ${counted} runs succeeded`);
+      appendBadge(el, "success",
+        t(`all ${counted} runs succeeded`,
+          `${counted} 件すべて成功`));
     } else {
-      appendBadge(el, "success", `${success} success`);
-      appendBadge(el, "failure", `${failure} failure`);
+      appendBadge(el, "success",
+        t(`${success} success`, `${success} 件成功`));
+      appendBadge(el, "failure",
+        t(`${failure} failure`, `${failure} 件失敗`));
       const rate = ((success / counted) * 100).toFixed(1);
       const rateEl = document.createElement("span");
       rateEl.className = "rate";
-      rateEl.textContent = `success rate ${rate}%`;
+      rateEl.textContent = t(`success rate ${rate}%`, `成功率 ${rate}%`);
       el.appendChild(rateEl);
     }
 
     if (other > 0) {
       const info = document.createElement("span");
-      info.textContent = `(${other} excluded — cancelled / neutral)`;
+      info.textContent = t(
+        `(${other} excluded — cancelled / neutral)`,
+        `(${other} 件除外 — cancelled / neutral)`);
       el.appendChild(info);
     }
   }
@@ -743,7 +788,7 @@
     section.appendChild(summary);
 
     const totalH3 = document.createElement("h3");
-    totalH3.textContent = "Total duration per run";
+    totalH3.textContent = t("Total duration per run", "Run ごとの Total Duration");
     section.appendChild(totalH3);
 
     const totalWrap = document.createElement("div");
@@ -754,7 +799,7 @@
     section.appendChild(totalWrap);
 
     const breakdownH3 = document.createElement("h3");
-    breakdownH3.textContent = "Duration breakdown (cumulative)";
+    breakdownH3.textContent = t("Duration breakdown (cumulative)", "実行時間の内訳 (累積)");
     section.appendChild(breakdownH3);
 
     const breakdownWrap = document.createElement("div");
@@ -770,7 +815,7 @@
     section.appendChild(breakdownMeta);
 
     const jobH3 = document.createElement("h3");
-    jobH3.textContent = "Per-job duration";
+    jobH3.textContent = t("Per-job duration", "Job ごとの実行時間");
     section.appendChild(jobH3);
 
     const jobWrap = document.createElement("div");
@@ -844,7 +889,9 @@
       if (populated.length === 0) {
         const empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = "No entries yet. Run the workflow at least once.";
+        empty.textContent = t(
+          "No entries yet. Run the workflow at least once.",
+          "まだエントリがありません。Workflow を 1 回以上実行してください。");
         container.appendChild(empty);
         return;
       }
@@ -860,7 +907,9 @@
         const level = getBreakdownLevel();
         const range = getActiveRange();
         const hasFilter = range.from !== null || range.to !== null;
-        const emptyMsg = hasFilter ? "No runs in selected range." : null;
+        const emptyMsg = hasFilter
+          ? t("No runs in selected range.", "選択した期間に該当する run がありません。")
+          : null;
         for (const t of chartTargets) {
           const filtered = filterByRange(t.source.entries, range);
           renderSummary(filtered, t.summaryId, hasFilter);
@@ -926,7 +975,9 @@
       const container = document.getElementById("sources");
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = `Failed to load ghtrack data: ${err.message}`;
+      empty.textContent = t(
+        `Failed to load ghtrack data: ${err.message}`,
+        `ghtrack データの読み込みに失敗しました: ${err.message}`);
       container.appendChild(empty);
     });
 })();
