@@ -1,18 +1,20 @@
 # ghtrack
 
-GitHub Actions の各 workflow run の実行時間を、走るたびに `gh-pages` ブランチへ蓄積していく Action(開発中: v0.1.0 プロトタイプ)。
+**English** | [日本語](README.ja.md)
 
-`benchmark-action/github-action-benchmark` のリアルタイム蓄積方式を、ベンチマーク値ではなく workflow / step の duration に応用することを目指している。
+A GitHub Action that records the execution time of each workflow run into your `gh-pages` branch on every run (in development: v0.1.0 prototype).
 
-## ステータス
+The goal is to apply the real-time accumulation pattern of `benchmark-action/github-action-benchmark` to workflow / step duration instead of benchmark values.
 
-**v0.1.0 プロトタイプ**: workflow run の job / step duration を取得して `gh-pages` branch の `data/data.json` に append し、合わせて Chart.js 製の `index.html` を同 branch の root に同梱する。リポジトリの GitHub Pages を有効化すれば、ブラウザで時系列グラフが見える。
+## Status
 
-**🌐 Live demo**: https://hatsu38.github.io/ghtrack/  ← 本リポ自身の dogfood の実物
+**v0.1.0 prototype**: collects job / step duration of a workflow run, appends it to `data/data.json` on the `gh-pages` branch, and bundles a Chart.js-powered `index.html` at the root of the same branch. Once GitHub Pages is enabled for the repository, the time-series charts are visible in the browser.
 
-## 使い方
+**🌐 Live demo**: https://hatsu38.github.io/ghtrack/  ← this repo's own dogfood
 
-リポジトリ内の任意の workflow の最後に、本 Action を追加する。`gh-pages` branch が無ければ初回実行時に自動でオーファンブランチを作る。
+## Usage
+
+Add this Action to the end of any workflow in the repository. If the `gh-pages` branch does not exist, an orphan branch is created automatically on the first run.
 
 ```yaml
 # .github/workflows/your-workflow.yml
@@ -22,7 +24,8 @@ on:
   push:
     branches: [main]
 
-# 推奨: 同 branch への並行 push 競合を抑える(retry でも吸収できるが、競合自体を減らせる)
+# Recommended: reduce concurrent push contention to the same branch
+# (retries also handle this, but reducing contention itself is cleaner).
 concurrency:
   group: ghtrack-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -38,27 +41,27 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # gh-pages への push に必要
-      actions: read     # workflow run / job の API 取得に必要
+      contents: write   # required to push to gh-pages
+      actions: read     # required to fetch workflow run / job APIs
     steps:
       - uses: hatsu38/ghtrack@main
 ```
 
-## 入力
+## Inputs
 
-すべて optional。デフォルトのまま自リポの `gh-pages` に蓄積されることを目指している。
+All optional. The intent is that defaults are enough to start accumulating data into your repo's `gh-pages` branch out of the box.
 
-| name | default | 説明 |
+| name | default | description |
 | --- | --- | --- |
-| `github-token` | `${{ github.token }}` | workflow run / job データ取得 + gh-pages への push に使う。`contents: write` 権限が必要 |
-| `gh-pages-branch` | `gh-pages` | 蓄積先のブランチ名 |
-| `data-file-path` | `data/data.json` | ブランチ内の JSON ファイルパス |
-| `auto-push` | `true` | false にすると entry を収集してログに出すだけで push しない |
-| `auto-create-branch` | `true` | ブランチが存在しないとき orphan として自動作成する。false なら明示的に失敗させる |
-| `max-items-in-history` | (無制限) | 正の整数を指定すると entries 配列を末尾 N 件に切り詰める。Contents API の 1MB 制限対策 |
-| `skip-fork-pr` | `true` | fork からの pull_request 時に push を skip(`GITHUB_TOKEN` に write 権限がないため) |
+| `github-token` | `${{ github.token }}` | used to fetch workflow run / job data and to push to gh-pages. Requires `contents: write` |
+| `gh-pages-branch` | `gh-pages` | branch where the data is accumulated |
+| `data-file-path` | `data/data.json` | JSON file path inside the branch |
+| `auto-push` | `true` | when `false`, the entry is collected and logged but not pushed |
+| `auto-create-branch` | `true` | creates the branch as orphan if it does not exist. When `false`, fails explicitly instead |
+| `max-items-in-history` | (unlimited) | a positive integer truncates the entries array to the last N items. Workaround for the Contents API 1MB limit |
+| `skip-fork-pr` | `true` | skip pushing on `pull_request` from forks (the `GITHUB_TOKEN` of fork PRs has no write permission) |
 
-## 蓄積される JSON のスキーマ
+## Schema of the accumulated JSON
 
 ```jsonc
 {
@@ -91,11 +94,11 @@ jobs:
 }
 ```
 
-`duration_sec` が `null` のステップは未完了(自分自身を観測する都合で、`track` ジョブの最終 step は常に未完了として記録される)。
+A `duration_sec` of `null` means the step is incomplete (because the run is observing itself, the final step of the `track` job is always recorded as incomplete).
 
-## 複数 workflow から同一 repo に蓄積する
+## Accumulating from multiple workflows into the same repo
 
-`data-file-path` を workflow ごとに分けると、job 名が衝突しても 1 つのダッシュボードでまとめて閲覧できる。
+Splitting `data-file-path` per workflow lets you view data from multiple workflows on a single dashboard, even when job names collide.
 
 ```yaml
 # .github/workflows/unit-test.yml
@@ -109,7 +112,7 @@ jobs:
     data-file-path: data/e2e-likes.json
 ```
 
-このとき gh-pages 上には `data/manifest.json` が自動生成され、登録済みの全 path が記録される:
+In this mode, `data/manifest.json` is auto-generated on `gh-pages` and tracks every registered path:
 
 ```jsonc
 {
@@ -121,69 +124,71 @@ jobs:
 }
 ```
 
-ダッシュボード(`index.html`)は manifest を読んで全 path を並列 fetch し、**workflow ごとに別 dataset** で描画する。Per-job チャートは `${workflow_file}::${job.name}` をキーに分離するので、`e2e_test` のような同名 job が複数 workflow に存在しても線が混ざらない。
+The dashboard (`index.html`) reads the manifest, fetches every path in parallel, and renders **a separate dataset per workflow**. The Per-job chart uses `${workflow_file}::${job.name}` as the key, so identically-named jobs (e.g. `e2e_test`) across multiple workflows do not get merged into one line.
 
-manifest が無い古い gh-pages では従来の `data/data.json` 単一読みにフォールバックするため、既存利用者の表示は壊れない。
+If the manifest is missing (older `gh-pages`), it falls back to reading `data/data.json` only, so existing users do not see broken output.
 
-## 可視化(GitHub Pages)
+## Visualization (GitHub Pages)
 
-Action は実行のたびに `gh-pages` branch の root に `index.html` を同梱(差分があれば自動同期)する。Chart.js v4 + date-fns adapter を CDN(jsDelivr)から読み込み、`fetch('./data/data.json')` でデータを取って 2 つの時系列グラフを描く構成:
+On every run, the Action bundles `index.html` at the root of the `gh-pages` branch (auto-syncs if it changed). It loads Chart.js v4 + the date-fns adapter from a CDN (jsDelivr), fetches the data via `fetch('./data/data.json')`, and renders two time-series charts:
 
-- **Total duration per run**: 各 run の `total_duration_sec` を点で並べた折れ線
-- **Per-job duration**: 各 job 名ごとに別 dataset を並べた折れ線。matrix permutation (`name (N)` / `name (N, M)` 形式) はデフォルトで base 名にまとめられ、各 run で **max(matrix node duration)** が表示される(並列実行で wall-clock を決める bottleneck node)。チャート上のチェックボックスで matrix を展開して個別 node 表示にも切り替え可能(設定は `localStorage` に保存される)
+- **Total duration per run**: a line chart of each run's `total_duration_sec`
+- **Per-job duration**: a line chart with one dataset per job name. matrix permutations (`name (N)` / `name (N, M)` form) are aggregated under the base name by default, and **max(matrix node duration)** is shown for each run (the bottleneck node that determines wall-clock under parallel execution). A checkbox above the chart lets you expand the matrix into individual nodes (the setting is persisted in `localStorage`).
 
-ライト/ダークは `prefers-color-scheme` で自動切り替え。viewport meta + max-width 960px のレスポンシブ。
+Light / dark theming follows `prefers-color-scheme`. Layout is responsive with `viewport` meta + `max-width: 960px`.
 
-### 公開手順
+The dashboard UI defaults to English. When `navigator.language` starts with `ja`, labels and headings switch to Japanese automatically.
 
-1. リポジトリを **public** にする(または GitHub Pro 以上のプランで Pages を有効化)
-2. **Settings → Pages** で:
+### How to publish
+
+1. Make the repository **public** (or enable Pages on a GitHub Pro plan or higher)
+2. **Settings → Pages**:
    - Source: **Deploy from a branch**
    - Branch: **`gh-pages`** / **`/`(root)**
-3. 数分後、`https://<owner>.github.io/<repo>/` でグラフが見える
+3. After a few minutes, the charts appear at `https://<owner>.github.io/<repo>/`
 
-データだけ確認したい場合は `https://<owner>.github.io/<repo>/data/data.json` を直接開いても良い。
+If you only want to inspect the data, you can open `https://<owner>.github.io/<repo>/data/data.json` directly.
 
-### ローカルで確認する
+### Running locally
 
-`index.html` の `fetch('./data/data.json')` はブラウザの CORS ポリシーにより `file://` で開くと失敗する(Chrome/Edge/Safari 等)。手元で動作確認したい場合は `gh-pages` branch を checkout してから、ローカル HTTP サーバー越しに開く必要がある。
+`fetch('./data/data.json')` from `index.html` does not work when opened via `file://` due to browser CORS policy (Chrome/Edge/Safari etc.). To check locally, check out the `gh-pages` branch and serve it via a local HTTP server:
 
 ```bash
-# gh-pages branch に切り替え(index.html と data/data.json が root にある状態)
+# switch to the gh-pages branch (so index.html and data/data.json are at the root)
 git switch gh-pages
 
-# 任意の static server で配信。Node.js があれば npx で十分
+# serve via any static server. With Node.js, npx is enough
 npx serve .
-# または
+# or
 npx http-server -p 8000
 ```
 
-表示された `http://localhost:<port>/` をブラウザで開けば、本番 Pages と同じグラフが見える。
+Open `http://localhost:<port>/` in the browser to see the same charts as production Pages.
 
-### 実例(本リポの dogfood)
+### Example (this repo's own dogfood)
 
-- ダッシュボード: https://hatsu38.github.io/ghtrack/
-- 生 JSON: https://hatsu38.github.io/ghtrack/data/data.json
+- Dashboard: https://hatsu38.github.io/ghtrack/
+- Raw JSON: https://hatsu38.github.io/ghtrack/data/data.json
 
-## 必要な permissions と注意事項
+## Required permissions and notes
 
-- `contents: write` を **track ジョブの `permissions:`** に必ず付与。Repository Settings → Actions → Workflow permissions が "Read and write" でも、workflow 側で明示しておくのが推奨(Settings 変更で挙動が変わるリスクを避ける)
-- `actions: read` も track ジョブで必要(workflow run の API 取得のため)
-- **fork PR からの実行**: `GITHUB_TOKEN` は base repo に write できないため、デフォルト(`skip-fork-pr: "true"`)では push を skip し `core.notice` で通知。entry の収集とログ出力は行う
-- **同時 push の競合**: 同じ `data/data.json` への並行更新は `sha` の楽観ロックで検出され、最大 5 回まで指数バックオフで retry。同 workflow 同 branch では `concurrency` を設定して競合自体を抑えるのが堅実
+- Always grant `contents: write` to the **`permissions:`** of the track job. Even when Repository Settings → Actions → Workflow permissions is set to "Read and write", declaring it explicitly in the workflow is recommended (so a Settings change does not silently break the action)
+- `actions: read` is also required on the track job (to call workflow run APIs)
+- **Runs from fork PRs**: `GITHUB_TOKEN` cannot write to the base repo, so by default (`skip-fork-pr: "true"`) the push is skipped and a `core.notice` is emitted. Entry collection and log output still run
+- **Concurrent push contention**: parallel updates to the same `data/data.json` are detected by optimistic locking on `sha` and retried with exponential backoff (up to 5 times). Setting `concurrency` on the same workflow / branch is the safer way to prevent contention from happening in the first place
 
-## ローカル開発
+## Local development
 
 ```bash
 pnpm install
 pnpm typecheck
-pnpm build   # dist/ にバンドル(commit 対象)
+pnpm build   # bundle into dist/ (committed to the repo)
 ```
 
-## 関連プロジェクト
+## Related projects
 
-- [hatsu38/ghlap](https://github.com/hatsu38/ghlap)(別開発中): 過去の workflow runs を後から取得して Supabase に蓄積する「過去取得型」。`ghtrack` は走った瞬間にコミットする「リアルタイム型」で、住み分けている。
+- [hatsu38/ghlap](https://github.com/hatsu38/ghlap) (also in development): a "post-fetch" approach that pulls past workflow runs and stores them in Supabase. `ghtrack` is the "real-time" approach that commits at the moment a run completes — they cover different use cases.
 
-## ライセンス
+## License
 
 MIT
