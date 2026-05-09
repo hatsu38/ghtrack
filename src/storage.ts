@@ -255,16 +255,47 @@ async function appendOnce(args: WriteEntryArgs): Promise<void> {
   const existing = await readDataFile(args);
   const next = appendEntry(existing.data, args.entry, args.inputs.maxItemsInHistory);
 
-  await args.octokit.rest.repos.createOrUpdateFileContents({
+  // Git Data API ベースで read-modify-write する。Contents API は >1MB のファイルで
+  // content を返さなくなるため、履歴を積み上げる用途では Blob/Tree/Commit を直接扱う。
+  const blob = await args.octokit.rest.git.createBlob({
     owner: args.owner,
     repo: args.repo,
-    path: args.inputs.dataFilePath,
-    branch: args.inputs.ghPagesBranch,
-    message: buildCommitMessage(args.entry),
     content: Buffer.from(serializeDataFile(next), "utf-8").toString("base64"),
-    sha: existing.fileSha ?? undefined,
+    encoding: "base64",
+  });
+
+  const tree = await args.octokit.rest.git.createTree({
+    owner: args.owner,
+    repo: args.repo,
+    base_tree: existing.baseTreeSha,
+    tree: [
+      {
+        path: args.inputs.dataFilePath,
+        mode: "100644",
+        type: "blob",
+        sha: blob.data.sha,
+      },
+    ],
+  });
+
+  const commit = await args.octokit.rest.git.createCommit({
+    owner: args.owner,
+    repo: args.repo,
+    message: buildCommitMessage(args.entry),
+    tree: tree.data.sha,
+    parents: [existing.headSha],
     author: COMMITTER,
     committer: COMMITTER,
+  });
+
+  // force:false で他 runner の同時 push と競合した場合は 422 が返る。
+  // appendWithRetry がそれを retry する。
+  await args.octokit.rest.git.updateRef({
+    owner: args.owner,
+    repo: args.repo,
+    ref: `heads/${args.inputs.ghPagesBranch}`,
+    sha: commit.data.sha,
+    force: false,
   });
 
   core.info(
@@ -275,45 +306,63 @@ async function appendOnce(args: WriteEntryArgs): Promise<void> {
 
 interface ReadResult {
   data: DataFile;
+  // 既存ファイルの blob sha。新規作成時は null。
   fileSha: string | null;
+  // ブランチ HEAD のコミット sha。createCommit の parent に渡す。
+  headSha: string;
+  // HEAD コミットの tree sha。createTree の base_tree に渡して差分更新する。
+  baseTreeSha: string;
 }
 
 async function readDataFile(args: WriteEntryArgs): Promise<ReadResult> {
-  try {
-    const res = await args.octokit.rest.repos.getContent({
-      owner: args.owner,
-      repo: args.repo,
-      path: args.inputs.dataFilePath,
-      ref: args.inputs.ghPagesBranch,
-    });
+  const ref = await args.octokit.rest.git.getRef({
+    owner: args.owner,
+    repo: args.repo,
+    ref: `heads/${args.inputs.ghPagesBranch}`,
+  });
+  const headSha = ref.data.object.sha;
 
-    if (Array.isArray(res.data)) {
-      throw new Error(
-        `${args.inputs.dataFilePath} is a directory on ${args.inputs.ghPagesBranch}, expected a file.`,
-      );
-    }
-    if (res.data.type !== "file") {
-      throw new Error(
-        `${args.inputs.dataFilePath} is not a regular file (type=${res.data.type}).`,
-      );
-    }
-    if (typeof res.data.content !== "string" || res.data.content.length === 0) {
-      // Contents API は >1MB のファイルでは content を返さない。
-      // 履歴が肥大化したら max-items-in-history で切り詰めるか、後続で git data API 移行を検討。
-      throw new Error(
-        `${args.inputs.dataFilePath} is too large for the Contents API. ` +
-          `Set max-items-in-history to prune history.`,
-      );
-    }
+  const commit = await args.octokit.rest.git.getCommit({
+    owner: args.owner,
+    repo: args.repo,
+    commit_sha: headSha,
+  });
+  const baseTreeSha = commit.data.tree.sha;
 
-    const text = Buffer.from(res.data.content, "base64").toString("utf-8");
-    return { data: parseDataFile(text), fileSha: res.data.sha };
-  } catch (err) {
-    if (errorStatus(err) === 404) {
-      return { data: emptyDataFile(), fileSha: null };
-    }
-    throw err;
+  // recursive=true を渡すとサブツリーまで展開される。data ファイルは
+  // ネストされたパス(e.g. data/e2e-admin.json)に置かれるためこれが必要。
+  const tree = await args.octokit.rest.git.getTree({
+    owner: args.owner,
+    repo: args.repo,
+    tree_sha: baseTreeSha,
+    recursive: "true",
+  });
+  if (tree.data.truncated) {
+    // gh-pages の管理対象は ghtrack が生成する数十ファイル程度を想定しており、
+    // GitHub 側の上限(>100k entries)に達することは実質起きないが、念のため明示エラー化する。
+    throw new Error(
+      `Tree at ${args.inputs.ghPagesBranch} is too large to enumerate recursively. ` +
+        `Please reduce the number of files on the branch.`,
+    );
   }
+
+  const node = tree.data.tree.find(
+    (n) => n.path === args.inputs.dataFilePath && n.type === "blob",
+  );
+  if (!node?.sha) {
+    // ブランチは存在するが data ファイルがまだ無いケース。空から始める。
+    return { data: emptyDataFile(), fileSha: null, headSha, baseTreeSha };
+  }
+
+  const blob = await args.octokit.rest.git.getBlob({
+    owner: args.owner,
+    repo: args.repo,
+    file_sha: node.sha,
+  });
+  // getBlob は encoding を返す。通常 base64 だが念のため動的に処理する。
+  const encoding = blob.data.encoding === "utf-8" ? "utf-8" : "base64";
+  const text = Buffer.from(blob.data.content, encoding).toString("utf-8");
+  return { data: parseDataFile(text), fileSha: node.sha, headSha, baseTreeSha };
 }
 
 function parseDataFile(text: string): DataFile {
