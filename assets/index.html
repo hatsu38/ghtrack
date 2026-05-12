@@ -360,7 +360,11 @@
       scales: {
         x: {
           type: "time",
-          time: { tooltipFormat: "yyyy-MM-dd HH:mm" },
+          time: {
+            minUnit: "day",
+            tooltipFormat: "yyyy-MM-dd HH:mm",
+            displayFormats: { day: "yyyy-MM-dd" },
+          },
           title: { display: true, text: "Date" },
         },
         y: {
@@ -571,6 +575,9 @@
 
   function stackedBarOptions(tooltipExtra) {
     const opts = chartOptions(tooltipExtra);
+    // time スケールだとデータ点が密だと bar 幅が 0 近くに潰れて見えなくなる。
+    // timeseries は同じ time フォーマット/displayFormats を引き継ぎつつ等間隔配置にする。
+    opts.scales.x.type = "timeseries";
     opts.scales.x.stacked = true;
     opts.scales.y.stacked = true;
     opts.scales.x.offset = true;
