@@ -360,7 +360,11 @@
       scales: {
         x: {
           type: "time",
-          time: { tooltipFormat: "yyyy-MM-dd HH:mm" },
+          time: {
+            minUnit: "day",
+            tooltipFormat: "yyyy-MM-dd HH:mm",
+            displayFormats: { day: "yyyy-MM-dd" },
+          },
           title: { display: true, text: "Date" },
         },
         y: {
