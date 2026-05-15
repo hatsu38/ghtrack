@@ -3,7 +3,7 @@ import * as github from "@actions/github";
 import { collectEntry } from "./collect";
 import { writeEntryToGhPages } from "./storage";
 import type { Inputs } from "./types";
-import { defaultDataFilePath } from "./workflow-file";
+import { defaultTrackName, validateTrackName } from "./workflow-file";
 
 async function run(): Promise<void> {
   try {
@@ -34,24 +34,20 @@ async function run(): Promise<void> {
 }
 
 function resolveInputs(): Inputs {
-  const maxItemsRaw = core.getInput("max-items-in-history");
-  const maxItemsInHistory =
-    maxItemsRaw === "" ? null : parsePositiveInt(maxItemsRaw, "max-items-in-history");
+  const raw = core.getInput("track-name").trim();
+  let trackName: string;
+  if (raw === "") {
+    trackName = defaultTrackName();
+  } else {
+    validateTrackName(raw);
+    trackName = raw;
+  }
 
   return {
     token: core.getInput("github-token", { required: true }),
     ghPagesBranch: core.getInput("gh-pages-branch") || "gh-pages",
-    dataFilePath: core.getInput("data-file-path") || defaultDataFilePath(),
-    maxItemsInHistory,
+    trackName,
   };
-}
-
-function parsePositiveInt(raw: string, name: string): number {
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n <= 0) {
-    throw new Error(`Invalid value for ${name}: "${raw}" — must be a positive integer.`);
-  }
-  return n;
 }
 
 function isForkPullRequest(context: typeof github.context): boolean {

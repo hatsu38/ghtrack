@@ -9,14 +9,26 @@ export function resolveWorkflowFileBasename(): string {
   return parts[parts.length - 1] ?? "";
 }
 
-export function defaultDataFilePath(): string {
+const TRACK_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
+export function validateTrackName(name: string): void {
+  if (!TRACK_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid track-name "${name}". Must match ${TRACK_NAME_PATTERN.source} ` +
+        "(alphanumeric, dot, underscore, hyphen).",
+    );
+  }
+}
+
+export function defaultTrackName(): string {
   const basename = resolveWorkflowFileBasename();
   if (basename === "") {
     throw new Error(
       "Could not resolve the workflow file name from GITHUB_WORKFLOW_REF. " +
-        "Set `data-file-path` explicitly to override.",
+        "Set `track-name` explicitly to override.",
     );
   }
   const stem = basename.replace(/\.ya?ml$/i, "");
-  return `data/${stem}.json`;
+  validateTrackName(stem);
+  return stem;
 }

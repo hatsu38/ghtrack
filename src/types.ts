@@ -1,5 +1,6 @@
 export const SCHEMA_VERSION = 1 as const;
-export const MANIFEST_SCHEMA_VERSION = 1 as const;
+export const MANIFEST_SCHEMA_VERSION = 2 as const;
+export const WORKFLOW_INDEX_SCHEMA_VERSION = 1 as const;
 
 export interface StepEntry {
   name: string;
@@ -32,32 +33,48 @@ export interface Entry {
   jobs: JobEntry[];
 }
 
-export interface DataFile {
-  schema_version: typeof SCHEMA_VERSION;
-  entries: Entry[];
-}
-
 export interface Inputs {
   token: string;
   ghPagesBranch: string;
-  dataFilePath: string;
-  maxItemsInHistory: number | null;
+  trackName: string;
 }
 
-export function emptyDataFile(): DataFile {
-  return { schema_version: SCHEMA_VERSION, entries: [] };
-}
-
-export interface ManifestSource {
-  path: string;
+export interface ManifestWorkflow {
+  track_name: string;
+  dir: string;
   first_seen: number;
 }
 
 export interface Manifest {
   schema_version: typeof MANIFEST_SCHEMA_VERSION;
-  sources: ManifestSource[];
+  workflows: ManifestWorkflow[];
 }
 
 export function emptyManifest(): Manifest {
-  return { schema_version: MANIFEST_SCHEMA_VERSION, sources: [] };
+  return { schema_version: MANIFEST_SCHEMA_VERSION, workflows: [] };
+}
+
+// 1 workflow (= 1 track) 配下に存在する run の一覧。dashboard が run ファイルへの
+// パスを構築するために必要。runs は run_id 昇順で保持する。
+// 権威データは per-run file 側にあるため、index が壊れても tree 列挙から再生成可能。
+export interface WorkflowIndexRun {
+  date: string; // "YYYY/MM/DD"
+  run_id: number;
+  run_attempt: number;
+}
+
+export interface WorkflowIndex {
+  schema_version: typeof WORKFLOW_INDEX_SCHEMA_VERSION;
+  track_name: string;
+  runs: WorkflowIndexRun[];
+  last_updated: number;
+}
+
+export function emptyWorkflowIndex(trackName: string): WorkflowIndex {
+  return {
+    schema_version: WORKFLOW_INDEX_SCHEMA_VERSION,
+    track_name: trackName,
+    runs: [],
+    last_updated: 0,
+  };
 }

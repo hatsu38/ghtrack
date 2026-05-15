@@ -9,27 +9,21 @@ branding:
 inputs:
   github-token:
     description: >-
-      GitHub token used to read workflow run / job data and to push the appended
-      JSON to the gh-pages branch. Default uses the workflow's GITHUB_TOKEN.
-      The token must have `contents: write` permission to push.
+      GitHub token used to read workflow run / job data and to push the
+      collected JSON to the gh-pages branch. Default uses the workflow's
+      GITHUB_TOKEN. The token must have `contents: write` permission to push.
     required: false
     default: ${{ github.token }}
   gh-pages-branch:
-    description: Branch to which the duration JSON is appended.
+    description: Branch to which the per-run JSON files are pushed.
     required: false
     default: gh-pages
-  data-file-path:
+  track-name:
     description: >-
-      Path of the JSON file inside the gh-pages branch. When omitted, defaults
-      to `data/<workflow-file-basename>.json` so that each workflow accumulates
-      into its own file automatically (e.g. `.github/workflows/test.yml` →
-      `data/test.json`).
-    required: false
-  max-items-in-history:
-    description: >-
-      If set to a positive integer, the entries array is truncated from the
-      head so that only the last N entries are retained. Useful to stay below
-      the GitHub Contents API 1MB-per-file limit.
+      Identifier used as the directory name under `data/`. Must match
+      `[a-zA-Z0-9._-]+`. When omitted, the workflow file basename (without the
+      `.yml` / `.yaml` extension) is used. Set this when you need to separate
+      tracks that share a workflow file (e.g., matrix shards or environments).
     required: false
 
 runs:
