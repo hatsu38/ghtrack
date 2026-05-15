@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ghtrack — workflow duration trends</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --muted: #57606a;
+      --border: #d0d7de;
+      --accent: #1f6feb;
+      --card: #f6f8fa;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --border: #30363d;
+        --accent: #58a6ff;
+        --card: #161b22;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+      line-height: 1.5;
+    }
+
+    main { max-width: 960px; margin: 0 auto; }
+
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }
+
+    h1 { margin: 0 0 4px; font-size: 28px; font-weight: 600; }
+    h1 a { color: inherit; text-decoration: none; }
+
+    .subtitle { color: var(--muted); font-size: 14px; margin: 0; }
+
+    section.source { margin-bottom: 48px; }
+    section.source + section.source {
+      border-top: 1px solid var(--border);
+      padding-top: 32px;
+    }
+
+    h2 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .source-meta { color: var(--muted); font-size: 13px; margin: 0; }
+
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 10px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .summary .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 12px;
+      border: 1px solid transparent;
+    }
+    .summary .badge.success {
+      background: rgba(63, 185, 80, 0.16);
+      color: #1a7f37;
+      border-color: rgba(63, 185, 80, 0.35);
+    }
+    .summary .badge.failure {
+      background: rgba(207, 34, 46, 0.16);
+      color: #cf222e;
+      border-color: rgba(207, 34, 46, 0.35);
+    }
+    .summary .badge.neutral {
+      background: var(--card);
+      color: var(--muted);
+      border-color: var(--border);
+    }
+    .summary .rate { font-weight: 600; color: var(--fg); }
+    @media (prefers-color-scheme: dark) {
+      .summary .badge.success { color: #56d364; }
+      .summary .badge.failure { color: #ff7b72; }
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 300px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .meta {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .empty {
+      padding: 36px 12px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .global-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 20px;
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .global-controls label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .global-controls input[type="checkbox"] { cursor: pointer; }
+    .global-controls select,
+    .global-controls input[type="date"] {
+      font: inherit;
+      color: inherit;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 6px;
+    }
+    .global-controls .custom-range {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .global-controls .custom-range[hidden] { display: none; }
+
+    footer {
+      margin-top: 48px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><a href="https://github.com/hatsu38/ghtrack">ghtrack</a></h1>
+    <p class="subtitle" data-i18n="subtitle">Workflow run duration trends, captured by ghtrack.</p>
+  </header>
+
+  <div class="global-controls">
+    <label>
+      <input type="checkbox" id="groupMatrixToggle">
+      <span data-i18n="aggregateMatrix">Aggregate matrix (max)</span>
+    </label>
+    <label>
+      <span data-i18n="breakdownLabel">Breakdown:</span>
+      <select id="breakdownLevel">
+        <option value="jobs">Jobs</option>
+        <option value="steps">Steps</option>
+      </select>
+    </label>
+    <label>
+      <span data-i18n="totalBucketLabel">Aggregation:</span>
+      <select id="totalBucket">
+        <option value="run" data-i18n="totalBucketRun">Per run</option>
+        <option value="day" data-i18n="totalBucketDay">Daily (avg)</option>
+        <option value="week" data-i18n="totalBucketWeek">Weekly (avg)</option>
+      </select>
+    </label>
+    <label>
+      <span data-i18n="rangeLabel">Range:</span>
+      <select id="rangePreset">
+        <option value="all" data-i18n="rangeAll">All time</option>
+        <option value="7d" data-i18n="range7d">Last 7 days</option>
+        <option value="30d" data-i18n="range30d">Last 30 days</option>
+        <option value="90d" data-i18n="range90d">Last 90 days</option>
+        <option value="custom" data-i18n="rangeCustom">Custom…</option>
+      </select>
+    </label>
+    <span class="custom-range" id="customRange" hidden>
+      <input type="date" id="rangeFrom" aria-label="from">
+      <span>–</span>
+      <input type="date" id="rangeTo" aria-label="to">
+    </span>
+  </div>
+
+  <div id="sources"></div>
+
+  <footer>
+    Powered by <a href="https://github.com/hatsu38/ghtrack">ghtrack</a> ·
+    Charts by <a href="https://www.chartjs.org/">Chart.js</a>
+  </footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const LOCALE_JA = (typeof navigator !== "undefined" &&
+    String(navigator.language || "").toLowerCase().startsWith("ja"));
+  function t(en, ja) { return LOCALE_JA ? ja : en; }
+  if (typeof document !== "undefined" && document.documentElement) {
+    document.documentElement.lang = LOCALE_JA ? "ja" : "en";
+  }
+
+  const I18N_JA = {
+    subtitle: "ghtrack で記録した workflow の実行時間トレンド。",
+    aggregateMatrix: "matrix を集約 (max) して表示",
+    breakdownLabel: "内訳:",
+    rangeLabel: "期間:",
+    rangeAll: "全期間",
+    range7d: "直近 7 日",
+    range30d: "直近 30 日",
+    range90d: "直近 90 日",
+    rangeCustom: "カスタム…",
+    totalBucketLabel: "集計単位:",
+    totalBucketRun: "Run ごと",
+    totalBucketDay: "日毎 (平均)",
+    totalBucketWeek: "週ごと (平均)",
+  };
+  function applyStaticI18n() {
+    if (!LOCALE_JA) return;
+    const els = document.querySelectorAll("[data-i18n]");
+    for (const el of els) {
+      const ja = I18N_JA[el.dataset.i18n];
+      if (ja) el.textContent = ja;
+    }
+  }
+  applyStaticI18n();
+
+  const PALETTE = [
+    "#1f6feb", "#bf8700", "#bc4c00", "#3fb950",
+    "#a371f7", "#db61a2", "#0a3069", "#bc8cff",
+  ];
+  function colorAt(i) { return PALETTE[i % PALETTE.length]; }
+
+  // matrix permutation の job 名(末尾が "(N)" や "(N, M)" など)を検出して、
+  // base 名の下にまとめるためのキー変換。
+  const MATRIX_RE = /^(.+?) \(\d+(?:, *\d+)*\)$/;
+  function groupKeyFor(name, on) {
+    if (!on) return name;
+    const m = MATRIX_RE.exec(name);
+    return m ? `${m[1]} (matrix)` : name;
+  }
+
+  const GROUP_MATRIX_STORAGE_KEY = "ghtrack:groupMatrix";
+  function getMatrixGrouping() {
+    return lsGet(GROUP_MATRIX_STORAGE_KEY, "true") === "true";
+  }
+  function setMatrixGrouping(value) {
+    lsSet(GROUP_MATRIX_STORAGE_KEY, value ? "true" : "false");
+  }
+
+  // 失敗扱いする conclusion。cancelled / neutral / null は集計対象外。
+  const FAIL_CONCLUSIONS = new Set(["failure", "timed_out"]);
+  const FAIL_COLOR = "#cf222e";
+
+  function isFailJob(job) {
+    return !!job && FAIL_CONCLUSIONS.has(job.conclusion);
+  }
+
+  // jobs を集約して run の成否を導く。
+  // 失敗系が 1 件でもあれば failure、全部 success なら success、
+  // それ以外（cancelled / neutral / null だけ）は other。
+  function deriveRunConclusion(entry) {
+    let hasFail = false;
+    let hasSuccess = false;
+    for (const j of entry.jobs) {
+      if (FAIL_CONCLUSIONS.has(j.conclusion)) hasFail = true;
+      else if (j.conclusion === "success") hasSuccess = true;
+    }
+    if (hasFail) return "failure";
+    if (hasSuccess) return "success";
+    return "other";
+  }
+
+  const RANGE_PRESET_KEY = "ghtrack:rangePreset";
+  const RANGE_FROM_KEY = "ghtrack:rangeFrom";
+  const RANGE_TO_KEY = "ghtrack:rangeTo";
+  const BREAKDOWN_LEVEL_KEY = "ghtrack:breakdownLevel";
+  const TOTAL_BUCKET_KEY = "ghtrack:totalBucket";
+  const DAY_MS = 86400000;
+  const OTHER_COLOR = "#8b949e";
+
+  function getBreakdownLevel() {
+    const v = lsGet(BREAKDOWN_LEVEL_KEY, "jobs");
+    return v === "steps" ? "steps" : "jobs";
+  }
+
+  function getTotalBucket() {
+    const v = lsGet(TOTAL_BUCKET_KEY, "run");
+    return v === "day" || v === "week" ? v : "run";
+  }
+
+  // ローカルタイムで日/週の先頭にスナップした timestamp を返す。
+  // 週は月曜始まり (ISO) で扱う。
+  function bucketStart(ms, bucket) {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    if (bucket === "week") {
+      // getDay(): 0=Sun, 1=Mon, ... 月曜始まりにオフセット
+      const dow = d.getDay();
+      const diff = (dow + 6) % 7;
+      d.setDate(d.getDate() - diff);
+    }
+    return d.getTime();
+  }
+
+  function isBucketed(bucket) {
+    return bucket === "day" || bucket === "week";
+  }
+
+  // items を { date } を持つ前提で bucket 単位にまとめ、key 昇順に返す。
+  function groupByBucket(items, bucket) {
+    const groups = new Map();
+    for (const it of items) {
+      const key = bucketStart(it.date, bucket);
+      let g = groups.get(key);
+      if (!g) { g = { key, items: [] }; groups.set(key, g); }
+      g.items.push(it);
+    }
+    return [...groups.values()].sort((a, b) => a.key - b.key);
+  }
+
+  function applyBucketAxis(opts, bucket) {
+    opts.scales.x.time.minUnit = bucket === "week" ? "week" : "day";
+    opts.scales.x.time.tooltipFormat = "yyyy-MM-dd";
+  }
+
+  function bucketTooltipHeader(point) {
+    const start = new Date(point.x);
+    const dateLabel = start.toLocaleDateString();
+    return [
+      point.bucket === "week"
+        ? t(`week of ${dateLabel}`, `${dateLabel} の週`)
+        : dateLabel,
+      t(`${point.bucketCount} run(s) averaged`,
+        `${point.bucketCount} 件の平均`),
+    ];
+  }
+
+  function bucketAvgLabel(bucket) {
+    if (bucket === "week") {
+      return t("Total duration (sec) · weekly avg",
+        "Total duration (sec) · 週平均");
+    }
+    return t("Total duration (sec) · daily avg",
+      "Total duration (sec) · 日平均");
+  }
+
+  function lsGet(key, fallback) {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v;
+    } catch (_) { return fallback; }
+  }
+  function lsSet(key, value) {
+    try {
+      if (value === null || value === "") localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (_) { /* ignore */ }
+  }
+
+  // preset / from / to から実際の数値範囲を返す。null は未指定。
+  function getActiveRange() {
+    const preset = lsGet(RANGE_PRESET_KEY, "30d");
+    const now = Date.now();
+    if (preset === "7d") return { from: now - 7 * DAY_MS, to: null };
+    if (preset === "30d") return { from: now - 30 * DAY_MS, to: null };
+    if (preset === "90d") return { from: now - 90 * DAY_MS, to: null };
+    if (preset === "custom") {
+      const f = lsGet(RANGE_FROM_KEY, "");
+      const t = lsGet(RANGE_TO_KEY, "");
+      const fromMs = f ? new Date(f + "T00:00:00").getTime() : null;
+      // to は終日含めるため翌日 0:00 - 1ms を上限にする
+      const toMs = t ? new Date(t + "T00:00:00").getTime() + DAY_MS - 1 : null;
+      return {
+        from: Number.isFinite(fromMs) ? fromMs : null,
+        to: Number.isFinite(toMs) ? toMs : null,
+      };
+    }
+    return { from: null, to: null };
+  }
+
+  function filterByRange(entries, range) {
+    if (range.from === null && range.to === null) return entries;
+    return entries.filter((e) =>
+      (range.from === null || e.date >= range.from) &&
+      (range.to === null || e.date <= range.to));
+  }
+
+  function chartOptions(tooltipExtra) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      scales: {
+        x: {
+          type: "time",
+          time: {
+            minUnit: "day",
+            tooltipFormat: "yyyy-MM-dd HH:mm",
+            displayFormats: { day: "yyyy-MM-dd" },
+          },
+          title: { display: true, text: "Date" },
+        },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: "Seconds" },
+        },
+      },
+      plugins: {
+        legend: { display: true, position: "top" },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              if (!items || items.length === 0 || !tooltipExtra) return "";
+              const lines = tooltipExtra(items[0].raw);
+              return lines.filter(Boolean).join("\n");
+            },
+          },
+        },
+      },
+    };
+  }
+
+  // canvas を取得し、bind 済み Chart があれば破棄する。
+  // 直前に replaceWithEmpty で empty div に差し変わっていた場合は canvas を作り直す。
+  function prepareCanvas(canvasId) {
+    const el = document.getElementById(canvasId);
+    if (!el) return null;
+    if (el.tagName === "CANVAS") {
+      const existing = Chart.getChart && Chart.getChart(el);
+      if (existing) existing.destroy();
+      return el;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.id = canvasId;
+    el.parentNode.replaceChild(canvas, el);
+    return canvas;
+  }
+
+  function replaceWithEmpty(canvasId, message) {
+    const el = document.getElementById(canvasId);
+    if (!el) return;
+    if (el.tagName === "CANVAS" && Chart.getChart) {
+      const existing = Chart.getChart(el);
+      if (existing) existing.destroy();
+    }
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.id = canvasId;
+    div.textContent = message;
+    el.parentNode.replaceChild(div, el);
+  }
+
+  function buildTotalChart(entries, canvasId, bucket, emptyMessage) {
+    const usable = entries.filter((e) => typeof e.total_duration_sec === "number");
+    if (usable.length === 0) {
+      replaceWithEmpty(canvasId, emptyMessage ||
+        t("No total_duration_sec recorded yet.",
+          "total_duration_sec が記録されていません。"));
+      return;
+    }
+    const canvas = prepareCanvas(canvasId);
+    if (!canvas) return;
+    const color = colorAt(0);
+
+    const bucketed = isBucketed(bucket);
+    const points = bucketed
+      ? groupByBucket(usable, bucket).map(({ key, items }) => {
+          const sum = items.reduce((s, e) => s + e.total_duration_sec, 0);
+          return { x: key, y: sum / items.length, bucketCount: items.length, bucket };
+        })
+      : usable.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e }));
+
+    const opts = chartOptions((point) => {
+      if (point && point.bucket) {
+        return [...bucketTooltipHeader(point), `avg: ${Math.round(point.y)}s`];
+      }
+      const e = point && point.raw;
+      if (!e) return [];
+      return [
+        `commit ${String(e.commit).slice(0, 7)}`,
+        `event: ${e.event}`,
+        e.run_attempt && e.run_attempt > 1 ? `run_attempt: ${e.run_attempt}` : null,
+      ];
+    });
+    if (bucketed) applyBucketAxis(opts, bucket);
+
+    new Chart(canvas, {
+      type: "line",
+      data: {
+        datasets: [{
+          label: bucketed ? bucketAvgLabel(bucket) : "Total duration (sec)",
+          data: points,
+          borderColor: color,
+          backgroundColor: color + "26",
+          tension: 0.25,
+          fill: true,
+          pointRadius: 3,
+        }],
+      },
+      options: opts,
+    });
+  }
+
+  function buildJobChart(entries, canvasId, metaId, groupMatrix, emptyMessage) {
+    // entry ごとに groupName → matching jobs の Map を一度だけ作る。
+    // 後続の dataset 構築で `groupKeyFor` 再評価と二重 filter を避ける。
+    const groupNames = new Set();
+    const perEntry = entries.map((entry) => {
+      const byGroup = new Map();
+      for (const j of entry.jobs) {
+        const k = groupKeyFor(j.name, groupMatrix);
+        if (!byGroup.has(k)) byGroup.set(k, []);
+        byGroup.get(k).push(j);
+        groupNames.add(k);
+      }
+      return { entry, byGroup };
+    });
+    if (groupNames.size === 0) {
+      replaceWithEmpty(canvasId, emptyMessage ||
+        t("No jobs recorded yet.", "Job がまだ記録されていません。"));
+      const metaEl = metaId ? document.getElementById(metaId) : null;
+      if (metaEl) metaEl.textContent = "";
+      return;
+    }
+    const canvas = prepareCanvas(canvasId);
+    if (!canvas) return;
+
+    const datasets = [...groupNames].map((groupName, i) => {
+      const data = perEntry
+        .map(({ entry, byGroup }) => {
+          const matched = byGroup.get(groupName);
+          if (!matched) return null;
+          const withDuration = matched.filter((j) => typeof j.duration_sec === "number");
+          if (withDuration.length === 0) return null;
+          // max を取る = 並列実行で wall-clock を決める bottleneck node
+          const slowest = withDuration.reduce(
+            (a, b) => (a.duration_sec >= b.duration_sec ? a : b),
+          );
+          // matrix 内に 1 つでも失敗があれば、その point は失敗扱いにする
+          const failingJob = matched.find(isFailJob) || null;
+          return {
+            x: entry.date,
+            y: slowest.duration_sec,
+            raw: entry,
+            jobRaw: slowest,
+            failingJob,
+            matrixCount: matched.length,
+            groupName,
+          };
+        })
+        .filter((p) => p !== null);
+      const color = colorAt(i);
+      const pointColors = data.map((p) => (p.failingJob ? FAIL_COLOR : color));
+      const pointRadii = data.map((p) => (p.failingJob ? 5 : 3));
+      return {
+        label: groupName,
+        data,
+        borderColor: color,
+        backgroundColor: color + "22",
+        tension: 0.25,
+        spanGaps: true,
+        pointRadius: pointRadii,
+        pointHoverRadius: pointRadii.map((r) => r + 2),
+        pointBackgroundColor: pointColors,
+        pointBorderColor: pointColors,
+      };
+    });
+
+    new Chart(canvas, {
+      type: "line",
+      data: { datasets },
+      options: chartOptions((point) => {
+        if (!point || !point.raw) return [];
+        const lines = [];
+        if (point.matrixCount > 1) {
+          lines.push(`job: ${point.groupName} (max of ${point.matrixCount} matrix nodes)`);
+          lines.push(`slowest: ${point.jobRaw.name}`);
+        } else {
+          lines.push(`job: ${point.jobRaw.name}`);
+        }
+        lines.push(`commit ${String(point.raw.commit).slice(0, 7)}`);
+        lines.push(`conclusion: ${point.jobRaw.conclusion ?? "-"}`);
+        // matrix 内で slowest 以外が失敗していたら明示
+        if (point.failingJob && point.failingJob !== point.jobRaw) {
+          lines.push(`failed in: ${point.failingJob.name} (${point.failingJob.conclusion})`);
+        }
+        return lines;
+      }),
+    });
+
+    const metaEl = document.getElementById(metaId);
+    if (metaEl) {
+      metaEl.textContent =
+        `${groupNames.size} job(s) tracked across ${entries.length} run(s)` +
+        (groupMatrix ? " (matrix aggregated)" : "") + ".";
+    }
+  }
+
+  // 1 entry の中で segment(job または step) ごとの duration を集約する。
+  // matrix 集約 ON のときは groupKeyFor で集約し、同一 key の中では max を取る
+  // (並列 matrix node の wall-clock を代表させる既存ロジックに合わせる)。
+  function entrySegments(entry, level, groupMatrix) {
+    const acc = new Map();
+    if (level === "steps") {
+      for (const j of entry.jobs) {
+        if (!j.steps) continue;
+        const jobKey = groupKeyFor(j.name, groupMatrix);
+        for (const s of j.steps) {
+          if (typeof s.duration_sec !== "number") continue;
+          const key = `${s.name} — ${jobKey}`;
+          acc.set(key, Math.max(acc.get(key) || 0, s.duration_sec));
+        }
+      }
+      return acc;
+    }
+    for (const j of entry.jobs) {
+      if (typeof j.duration_sec !== "number") continue;
+      const key = groupKeyFor(j.name, groupMatrix);
+      acc.set(key, Math.max(acc.get(key) || 0, j.duration_sec));
+    }
+    return acc;
+  }
+
+  function stackedBarOptions(tooltipExtra) {
+    const opts = chartOptions(tooltipExtra);
+    // time スケールだとデータ点が密だと bar 幅が 0 近くに潰れて見えなくなる。
+    // timeseries は同じ time フォーマット/displayFormats を引き継ぎつつ等間隔配置にする。
+    opts.scales.x.type = "timeseries";
+    opts.scales.x.stacked = true;
+    opts.scales.y.stacked = true;
+    opts.scales.x.offset = true;
+    // bar 上をホバーしたときにその segment 単体の tooltip を出したい
+    opts.interaction = { mode: "nearest", axis: "x", intersect: true };
+    return opts;
+  }
+
+  function buildBreakdownChart(entries, canvasId, metaId, level, groupMatrix, bucket, emptyMessage) {
+    const setMeta = (text) => {
+      const m = metaId ? document.getElementById(metaId) : null;
+      if (m) m.textContent = text;
+    };
+
+    if (entries.length === 0) {
+      replaceWithEmpty(canvasId, emptyMessage ||
+        t("No runs to break down.", "内訳を表示できる run がありません。"));
+      setMeta("");
+      return;
+    }
+
+    const perEntry = entries.map((e) => entrySegments(e, level, groupMatrix));
+    const totals = new Map();
+    for (const segMap of perEntry) {
+      for (const [k, v] of segMap) {
+        totals.set(k, (totals.get(k) || 0) + v);
+      }
+    }
+    if (totals.size === 0) {
+      replaceWithEmpty(canvasId,
+        level === "steps"
+          ? t("No step duration recorded yet.",
+              "Step の実行時間がまだ記録されていません。")
+          : t("No job duration recorded yet.",
+              "Job の実行時間がまだ記録されていません。"));
+      setMeta("");
+      return;
+    }
+
+    const canvas = prepareCanvas(canvasId);
+    if (!canvas) return;
+
+    // Top N + その他 を集約。N は palette 色数に揃えて凡例の色被りを防ぐ。
+    const TOP_N = PALETTE.length;
+    const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+    const topKeys = sorted.slice(0, TOP_N).map(([k]) => k);
+    const otherKeys = sorted.slice(TOP_N).map(([k]) => k);
+    const hasOther = otherKeys.length > 0;
+
+    // bucket = day/week のときは entries を bucket 単位にまとめ、
+    // 各 segment の duration を bucket 内で平均化する。
+    const bucketed = isBucketed(bucket);
+    const withSeg = entries.map((entry, idx) => ({
+      date: entry.date,
+      entry,
+      segMap: perEntry[idx],
+    }));
+    const xUnits = bucketed
+      ? groupByBucket(withSeg, bucket).map(({ key, items }) => {
+          const sums = new Map();
+          for (const { segMap } of items) {
+            for (const [k, v] of segMap) sums.set(k, (sums.get(k) || 0) + v);
+          }
+          const avgMap = new Map();
+          for (const [k, s] of sums) avgMap.set(k, s / items.length);
+          return { x: key, segMap: avgMap, count: items.length };
+        })
+      : withSeg.map((u) => ({ x: u.date, segMap: u.segMap, raw: u.entry }));
+
+    const segLabel = level === "steps" ? "step" : "job";
+    const bucketField = bucketed ? bucket : null;
+
+    const datasets = topKeys.map((key, i) => {
+      const color = colorAt(i);
+      return {
+        label: key,
+        data: xUnits.map((u) => ({
+          x: u.x,
+          y: u.segMap.get(key) || 0,
+          raw: u.raw,
+          bucketCount: u.count,
+          bucket: bucketField,
+          segName: key,
+        })),
+        backgroundColor: color,
+        borderColor: color,
+        borderWidth: 0,
+        stack: "duration",
+      };
+    });
+    if (hasOther) {
+      const topSet = new Set(topKeys);
+      datasets.push({
+        label: `other (${otherKeys.length})`,
+        data: xUnits.map((u) => {
+          let sum = 0;
+          for (const [k, v] of u.segMap) {
+            if (!topSet.has(k)) sum += v;
+          }
+          return {
+            x: u.x,
+            y: sum,
+            raw: u.raw,
+            bucketCount: u.count,
+            bucket: bucketField,
+            segName: "other",
+            otherCount: otherKeys.length,
+          };
+        }),
+        backgroundColor: OTHER_COLOR,
+        borderColor: OTHER_COLOR,
+        borderWidth: 0,
+        stack: "duration",
+      });
+    }
+
+    const opts = stackedBarOptions((point) => {
+      if (!point) return [];
+      const lines = [];
+      if (point.bucket) {
+        lines.push(...bucketTooltipHeader(point));
+      } else if (point.raw) {
+        lines.push(`commit ${String(point.raw.commit).slice(0, 7)}`);
+      }
+      if (point.segName === "other") {
+        lines.push(`other: ${point.otherCount} ${level} grouped`);
+      } else {
+        lines.push(`${segLabel}: ${point.segName}`);
+      }
+      lines.push(`${point.bucket ? "avg" : "duration"}: ${Math.round(point.y)}s`);
+      return lines;
+    });
+    if (bucketed) applyBucketAxis(opts, bucket);
+
+    new Chart(canvas, { type: "bar", data: { datasets }, options: opts });
+
+    const noteParts = [];
+    if (hasOther) noteParts.push(`top ${topKeys.length} of ${totals.size} ${level}`);
+    else noteParts.push(`${totals.size} ${level}`);
+    if (groupMatrix) noteParts.push("matrix aggregated");
+    if (bucketed) {
+      noteParts.push(bucket === "week"
+        ? t("weekly avg", "週平均")
+        : t("daily avg", "日平均"));
+    }
+    noteParts.push(t(
+      "stacks may exceed Total due to parallel execution",
+      "並列実行のため Total Duration とは一致しません"));
+    setMeta(noteParts.join(" · ") + ".");
+  }
+
+  function appendBadge(parent, kind, text) {
+    const span = document.createElement("span");
+    span.className = `badge ${kind}`;
+    span.textContent = text;
+    parent.appendChild(span);
+  }
+
+  // 母数 = success + failure。cancelled / neutral / null は other としてカウントだけする。
+  function summarizeRuns(entries) {
+    let success = 0, failure = 0, other = 0;
+    for (const e of entries) {
+      const c = deriveRunConclusion(e);
+      if (c === "success") success++;
+      else if (c === "failure") failure++;
+      else other++;
+    }
+    return { success, failure, other, total: entries.length };
+  }
+
+  function renderSummary(entries, summaryId, hasFilter) {
+    const el = document.getElementById(summaryId);
+    if (!el) return;
+    el.innerHTML = "";
+
+    if (entries.length === 0) {
+      appendBadge(el, "neutral", hasFilter
+        ? t("No runs in selected range", "選択した期間に該当する run がありません")
+        : t("No runs yet", "まだ run がありません"));
+      return;
+    }
+
+    const { success, failure, other, total } = summarizeRuns(entries);
+    const counted = success + failure;
+
+    if (counted === 0) {
+      appendBadge(el, "neutral",
+        t(`${total} runs (no conclusion recorded)`,
+          `${total} runs (conclusion 未記録)`));
+      return;
+    }
+
+    if (failure === 0) {
+      appendBadge(el, "success",
+        t(`all ${counted} runs succeeded`,
+          `${counted} 件すべて成功`));
+    } else {
+      appendBadge(el, "success",
+        t(`${success} success`, `${success} 件成功`));
+      appendBadge(el, "failure",
+        t(`${failure} failure`, `${failure} 件失敗`));
+      const rate = ((success / counted) * 100).toFixed(1);
+      const rateEl = document.createElement("span");
+      rateEl.className = "rate";
+      rateEl.textContent = t(`success rate ${rate}%`, `成功率 ${rate}%`);
+      el.appendChild(rateEl);
+    }
+
+    if (other > 0) {
+      const info = document.createElement("span");
+      info.textContent = t(
+        `(${other} excluded — cancelled / neutral)`,
+        `(${other} 件除外 — cancelled / neutral)`);
+      el.appendChild(info);
+    }
+  }
+
+  function deriveSourceTitle(source) {
+    const e = source.entries[0];
+    return (e && (e.workflow || e.workflow_file)) || source.track_name || source.dir;
+  }
+
+  function renderSourceSection(source, idx, container) {
+    const totalCanvasId = `total-${idx}`;
+    const jobCanvasId = `job-${idx}`;
+    const jobMetaId = `job-meta-${idx}`;
+    const summaryId = `summary-${idx}`;
+    const breakdownCanvasId = `breakdown-${idx}`;
+    const breakdownMetaId = `breakdown-meta-${idx}`;
+    const sourceMetaId = `source-meta-${idx}`;
+
+    const section = document.createElement("section");
+    section.className = "source";
+
+    const title = document.createElement("h2");
+    title.textContent = deriveSourceTitle(source);
+    section.appendChild(title);
+
+    const meta = document.createElement("p");
+    meta.className = "source-meta";
+    meta.id = sourceMetaId;
+    section.appendChild(meta);
+    updateSourceMeta(source, meta);
+
+    const summary = document.createElement("div");
+    summary.className = "summary";
+    summary.id = summaryId;
+    section.appendChild(summary);
+
+    const totalH3 = document.createElement("h3");
+    totalH3.textContent = t("Total duration per run", "Run ごとの Total Duration");
+    section.appendChild(totalH3);
+
+    const totalWrap = document.createElement("div");
+    totalWrap.className = "chart-wrap";
+    const totalCanvas = document.createElement("canvas");
+    totalCanvas.id = totalCanvasId;
+    totalWrap.appendChild(totalCanvas);
+    section.appendChild(totalWrap);
+
+    const breakdownH3 = document.createElement("h3");
+    breakdownH3.textContent = t("Duration breakdown (cumulative)", "実行時間の内訳 (累積)");
+    section.appendChild(breakdownH3);
+
+    const breakdownWrap = document.createElement("div");
+    breakdownWrap.className = "chart-wrap";
+    const breakdownCanvas = document.createElement("canvas");
+    breakdownCanvas.id = breakdownCanvasId;
+    breakdownWrap.appendChild(breakdownCanvas);
+    section.appendChild(breakdownWrap);
+
+    const breakdownMeta = document.createElement("p");
+    breakdownMeta.className = "meta";
+    breakdownMeta.id = breakdownMetaId;
+    section.appendChild(breakdownMeta);
+
+    const jobH3 = document.createElement("h3");
+    jobH3.textContent = t("Per-job duration", "Job ごとの実行時間");
+    section.appendChild(jobH3);
+
+    const jobWrap = document.createElement("div");
+    jobWrap.className = "chart-wrap";
+    const jobCanvas = document.createElement("canvas");
+    jobCanvas.id = jobCanvasId;
+    jobWrap.appendChild(jobCanvas);
+    section.appendChild(jobWrap);
+
+    const jobMeta = document.createElement("p");
+    jobMeta.className = "meta";
+    jobMeta.id = jobMetaId;
+    section.appendChild(jobMeta);
+
+    container.appendChild(section);
+
+    return {
+      source,
+      totalCanvasId,
+      jobCanvasId,
+      jobMetaId,
+      summaryId,
+      breakdownCanvasId,
+      breakdownMetaId,
+      sourceMetaId,
+    };
+  }
+
+  function updateSourceMeta(source, metaEl) {
+    const latest = source.entries.length > 0
+      ? new Date(source.entries[source.entries.length - 1].date).toLocaleString()
+      : null;
+    const totalRuns = typeof source.totalRuns === "number"
+      ? source.totalRuns
+      : source.entries.length;
+    const loaded = source.entries.length;
+    const countText = loaded === totalRuns
+      ? `${loaded} run(s)`
+      : `${loaded}/${totalRuns} run(s) loaded`;
+    metaEl.textContent =
+      `${source.dir} · ${countText}` +
+      (latest ? ` (latest: ${latest})` : "");
+  }
+
+  function fetchJson(path) {
+    return fetch(path, { cache: "no-cache" }).then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    });
+  }
+
+  function normalizePath(p) {
+    return p.startsWith("./") || p.startsWith("/") ? p : `./${p}`;
+  }
+
+  // manifest (schema_version=2) は workflows[] を持つ前提。
+  // manifest が無い (= まだ Action が一度も実行されていない) ケースでは空配列を返す。
+  function loadManifest() {
+    return fetchJson("./data/manifest.json")
+      .then((m) => {
+        if (!m || !Array.isArray(m.workflows)) return [];
+        return m.workflows.filter(
+          (w) => w && typeof w.track_name === "string" && typeof w.dir === "string",
+        );
+      })
+      .catch(() => []);
+  }
+
+  function loadWorkflowIndex(workflow) {
+    const indexPath = `${normalizePath(workflow.dir)}/index.json`;
+    return fetchJson(indexPath)
+      .then((idx) => {
+        if (!idx || !Array.isArray(idx.runs)) return { ...workflow, runs: [] };
+        return { ...workflow, runs: idx.runs };
+      })
+      .catch((err) => {
+        console.warn(`ghtrack: failed to load index for ${workflow.track_name}: ${err.message}`);
+        return { ...workflow, runs: [] };
+      });
+  }
+
+  function runFilePath(workflow, run) {
+    return `${normalizePath(workflow.dir)}/${run.date}/${run.run_id}-${run.run_attempt}.json`;
+  }
+
+  // "YYYY/MM/DD" を UTC 0:00 のミリ秒へ。
+  function parseDateStrToMs(str) {
+    const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(str);
+    if (!m) return null;
+    return Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+  }
+
+  // range 内の run を抽出。run.date は日単位なので日境界で包含判定する。
+  // entry.date (ミリ秒) が範囲外の per-run ファイルは描画時の filterByRange で再フィルタされる。
+  function runsInRange(runs, range) {
+    if (range.from === null && range.to === null) return runs;
+    return runs.filter((run) => {
+      const dayMs = parseDateStrToMs(run.date);
+      if (dayMs === null) return true;
+      const dayEnd = dayMs + DAY_MS - 1;
+      if (range.from !== null && dayEnd < range.from) return false;
+      if (range.to !== null && dayMs > range.to) return false;
+      return true;
+    });
+  }
+
+  function fetchRunsWithCache(workflow, runs, cache) {
+    return Promise.all(
+      runs.map((run) => {
+        const key = `${workflow.track_name}|${run.run_id}|${run.run_attempt}`;
+        const cached = cache.get(key);
+        if (cached) return Promise.resolve(cached);
+        return fetchJson(runFilePath(workflow, run))
+          .then((entry) => {
+            cache.set(key, entry);
+            return entry;
+          })
+          .catch((err) => {
+            console.warn(`ghtrack: failed to load ${runFilePath(workflow, run)}: ${err.message}`);
+            return null;
+          });
+      }),
+    ).then((entries) => entries.filter((e) => e !== null));
+  }
+
+  loadManifest()
+    .then((workflows) => Promise.all(workflows.map(loadWorkflowIndex)))
+    .then((workflowsWithRuns) => {
+      const populated = workflowsWithRuns.filter((w) => w.runs.length > 0);
+      const container = document.getElementById("sources");
+
+      if (populated.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = t(
+          "No entries yet. Run the workflow at least once.",
+          "まだエントリがありません。Workflow を 1 回以上実行してください。");
+        container.appendChild(empty);
+        return;
+      }
+
+      const cache = new Map();
+      const chartTargets = populated.map((wf, i) => {
+        const source = {
+          track_name: wf.track_name,
+          dir: wf.dir,
+          runs: wf.runs,
+          totalRuns: wf.runs.length,
+          entries: [],
+        };
+        return renderSourceSection(source, i, container);
+      });
+
+      const renderAllCharts = () => {
+        const groupMatrix = getMatrixGrouping();
+        const level = getBreakdownLevel();
+        const bucket = getTotalBucket();
+        const range = getActiveRange();
+        const hasFilter = range.from !== null || range.to !== null;
+        const emptyMsg = hasFilter
+          ? t("No runs in selected range.", "選択した期間に該当する run がありません。")
+          : null;
+        for (const target of chartTargets) {
+          const filtered = filterByRange(target.source.entries, range);
+          renderSummary(filtered, target.summaryId, hasFilter);
+          buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
+          buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, bucket, emptyMsg);
+          buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
+          const metaEl = document.getElementById(target.sourceMetaId);
+          updateSourceMeta(target.source, metaEl);
+        }
+      };
+
+      const loadEntriesForCurrentRange = () => {
+        const range = getActiveRange();
+        return Promise.all(
+          chartTargets.map((target) => {
+            const wfRunsToFetch = runsInRange(target.source.runs, range);
+            return fetchRunsWithCache(target.source, wfRunsToFetch, cache).then(
+              (entries) => {
+                target.source.entries = entries
+                  .slice()
+                  .sort((a, b) => a.date - b.date);
+              },
+            );
+          }),
+        );
+      };
+
+      const reloadAndRender = () =>
+        loadEntriesForCurrentRange().then(renderAllCharts);
+
+      const toggle = document.getElementById("groupMatrixToggle");
+      if (toggle) {
+        toggle.checked = getMatrixGrouping();
+        toggle.addEventListener("change", () => {
+          setMatrixGrouping(toggle.checked);
+          renderAllCharts();
+        });
+      }
+
+      const breakdownSelect = document.getElementById("breakdownLevel");
+      if (breakdownSelect) {
+        breakdownSelect.value = getBreakdownLevel();
+        breakdownSelect.addEventListener("change", () => {
+          lsSet(BREAKDOWN_LEVEL_KEY, breakdownSelect.value);
+          renderAllCharts();
+        });
+      }
+
+      const totalBucketSelect = document.getElementById("totalBucket");
+      if (totalBucketSelect) {
+        totalBucketSelect.value = getTotalBucket();
+        totalBucketSelect.addEventListener("change", () => {
+          lsSet(TOTAL_BUCKET_KEY, totalBucketSelect.value);
+          renderAllCharts();
+        });
+      }
+
+      const rangePreset = document.getElementById("rangePreset");
+      const customRange = document.getElementById("customRange");
+      const rangeFrom = document.getElementById("rangeFrom");
+      const rangeTo = document.getElementById("rangeTo");
+      const updateCustomVisibility = (preset) => {
+        if (customRange) customRange.hidden = preset !== "custom";
+      };
+      if (rangePreset) {
+        const initial = lsGet(RANGE_PRESET_KEY, "30d");
+        rangePreset.value = initial;
+        updateCustomVisibility(initial);
+        rangePreset.addEventListener("change", () => {
+          lsSet(RANGE_PRESET_KEY, rangePreset.value);
+          updateCustomVisibility(rangePreset.value);
+          reloadAndRender();
+        });
+      }
+      if (rangeFrom) {
+        rangeFrom.value = lsGet(RANGE_FROM_KEY, "");
+        rangeFrom.addEventListener("change", () => {
+          lsSet(RANGE_FROM_KEY, rangeFrom.value);
+          reloadAndRender();
+        });
+      }
+      if (rangeTo) {
+        rangeTo.value = lsGet(RANGE_TO_KEY, "");
+        rangeTo.addEventListener("change", () => {
+          lsSet(RANGE_TO_KEY, rangeTo.value);
+          reloadAndRender();
+        });
+      }
+
+      return reloadAndRender();
+    })
+    .catch((err) => {
+      const container = document.getElementById("sources");
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = t(
+        `Failed to load ghtrack data: ${err.message}`,
+        `ghtrack データの読み込みに失敗しました: ${err.message}`);
+      container.appendChild(empty);
+    });
+})();
+</script>
+</body>
+</html>
