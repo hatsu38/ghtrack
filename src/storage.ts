@@ -38,11 +38,6 @@ export async function writeEntryToGhPages(args: WriteEntryArgs): Promise<void> {
   const branchExists = await branchExistsOnRemote(args);
 
   if (!branchExists) {
-    if (!args.inputs.autoCreateBranch) {
-      throw new Error(
-        `Branch "${args.inputs.ghPagesBranch}" does not exist and auto-create-branch is disabled.`,
-      );
-    }
     const bootstrapped = await bootstrapBranch(args);
     if (bootstrapped) return;
     // race condition: branch was concurrently created → fall through to update flow

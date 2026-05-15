@@ -982,20 +982,20 @@
     });
   }
 
-  // manifest があれば複数ソース対応、無ければ従来パスへフォールバック。
-  // 古い gh-pages(manifest 未生成)とも互換を保つ。
+  // manifest が gh-pages に必ず存在する前提。manifest が無い (= まだ Action が
+  // 一度も実行されていない) ケースでは空配列を返し、empty 表示に倒す。
   function resolveSourcePaths() {
     return fetchJson("./data/manifest.json")
       .then((m) => {
         if (!m || !Array.isArray(m.sources) || m.sources.length === 0) {
-          return ["./data/data.json"];
+          return [];
         }
         return m.sources
           .map((s) => s && typeof s.path === "string" ? s.path : null)
           .filter((p) => p !== null)
           .map((p) => p.startsWith("./") || p.startsWith("/") ? p : `./${p}`);
       })
-      .catch(() => ["./data/data.json"]);
+      .catch(() => []);
   }
 
   resolveSourcePaths()
