@@ -4,6 +4,10 @@
     {
       "path": "data/data.json",
       "first_seen": 1778204853527
+    },
+    {
+      "path": "data/test.json",
+      "first_seen": 1778848211594
     }
   ]
 }
