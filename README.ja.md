@@ -8,7 +8,7 @@ GitHub Actions の各 workflow run の実行時間を、走るたびに `gh-page
 
 ## ステータス
 
-**v0.1.0 プロトタイプ**: workflow run の job / step duration を取得して `gh-pages` branch の `data/<track-name>/<YYYY>/<MM>/<DD>/<run_id>-<attempt>.json` (1 run = 1 ファイル) として書き出し、合わせて Chart.js 製の `index.html` を同 branch の root に同梱する。リポジトリの GitHub Pages を有効化すれば、ブラウザで時系列グラフが見える。
+A**v0.1.0 プロトタイプ**: workflow run の job / step duration を取得して `gh-pages` branch の `data/<track-name>/<YYYY>/<MM>/<DD>/<run_id>-<attempt>.json` (1 run = 1 ファイル) として書き出し、合わせて Chart.js 製の `index.html` を同 branch の root に同梱する。リポジトリの GitHub Pages を有効化すれば、ブラウザで時系列グラフが見える。
 
 **🌐 Live demo**: https://hatsu38.github.io/ghtrack/  ← 本リポ自身の dogfood の実物
 
@@ -191,6 +191,33 @@ npx http-server -p 8000
 - `actions: read` も track ジョブで必要(workflow run の API 取得のため)
 - **fork PR からの実行**: `GITHUB_TOKEN` は base repo に write できないため、Action は `core.notice` のみ出して early return する(entry 収集も push もしない)
 - **同時 push の競合**: per-run file は一意なパスに新規作成するだけなので互いに衝突しない。read-modify-write が残るのは workflow ごとの `index.json` のみで、こちらは小さいため指数バックオフ + jitter で最大 10 回まで retry すれば実用上十分
+
+## v1 単一ファイル構成からの migration
+
+旧 `data/<workflow>.json` (entries[] 集約) 構成の `gh-pages` ブランチが既にある場合、ワンショットの migration スクリプトで変換できる:
+
+```bash
+# 1. 既存 gh-pages を remote 上でバックアップ
+git fetch origin gh-pages
+git push origin refs/remotes/origin/gh-pages:refs/heads/gh-pages-v1-backup
+git push origin --delete gh-pages
+
+# 2. バックアップをローカルに checkout
+git worktree add /tmp/ghtrack-v1 gh-pages-v1-backup
+
+# 3. migration スクリプトを実行(v2 構成のツリーを新規ディレクトリに書き出す)
+node scripts/migrate-v1-to-v2.mjs /tmp/ghtrack-v1 /tmp/ghtrack-v2
+
+# 4. /tmp/ghtrack-v2 を新しい gh-pages として push
+cd /tmp/ghtrack-v2
+git init -b gh-pages
+git add .
+git commit -m "chore(ghtrack): migrate to v2 per-run file layout"
+git remote add origin <repo-url>
+git push origin gh-pages
+```
+
+ステップ 4 完了後、次回 ghtrack 実行時から v2 モードで追記される。`gh-pages-v1-backup` ブランチはあとから削除しても残しておいても良い。
 
 ## ローカル開発
 

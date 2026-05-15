@@ -194,6 +194,33 @@ Open `http://localhost:<port>/` in the browser to see the same charts as product
 - **Runs from fork PRs**: `GITHUB_TOKEN` cannot write to the base repo, so the Action exits early with a `core.notice` and does not collect or push anything
 - **Concurrent push contention**: per-run files are append-only at unique paths, so they never conflict with each other. Only the per-workflow `index.json` is read-modify-write, and that small file is retried with exponential backoff + jitter (up to 10 attempts) when contended
 
+## Migration from the v1 single-file layout
+
+If you have an existing `gh-pages` branch that used the previous `data/<workflow>.json` (entries[] aggregated) layout, run the one-shot migration script:
+
+```bash
+# 1. back up the old gh-pages on the remote
+git fetch origin gh-pages
+git push origin refs/remotes/origin/gh-pages:refs/heads/gh-pages-v1-backup
+git push origin --delete gh-pages
+
+# 2. check out the backup locally
+git worktree add /tmp/ghtrack-v1 gh-pages-v1-backup
+
+# 3. run the migration script (writes the v2 tree to a new dir)
+node scripts/migrate-v1-to-v2.mjs /tmp/ghtrack-v1 /tmp/ghtrack-v2
+
+# 4. push /tmp/ghtrack-v2 as the new gh-pages
+cd /tmp/ghtrack-v2
+git init -b gh-pages
+git add .
+git commit -m "chore(ghtrack): migrate to v2 per-run file layout"
+git remote add origin <repo-url>
+git push origin gh-pages
+```
+
+After step 4 the next ghtrack run will append in v2 mode without further changes. The `gh-pages-v1-backup` branch can be kept or deleted later.
+
 ## Local development
 
 ```bash
