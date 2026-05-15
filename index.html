@@ -195,6 +195,14 @@
       </select>
     </label>
     <label>
+      <span data-i18n="totalBucketLabel">Aggregation:</span>
+      <select id="totalBucket">
+        <option value="run" data-i18n="totalBucketRun">Per run</option>
+        <option value="day" data-i18n="totalBucketDay">Daily (avg)</option>
+        <option value="week" data-i18n="totalBucketWeek">Weekly (avg)</option>
+      </select>
+    </label>
+    <label>
       <span data-i18n="rangeLabel">Range:</span>
       <select id="rangePreset">
         <option value="all" data-i18n="rangeAll">All time</option>
@@ -242,6 +250,10 @@
     range30d: "直近 30 日",
     range90d: "直近 90 日",
     rangeCustom: "カスタム…",
+    totalBucketLabel: "集計単位:",
+    totalBucketRun: "Run ごと",
+    totalBucketDay: "日毎 (平均)",
+    totalBucketWeek: "週ごと (平均)",
   };
   function applyStaticI18n() {
     if (!LOCALE_JA) return;
@@ -303,12 +315,74 @@
   const RANGE_FROM_KEY = "ghtrack:rangeFrom";
   const RANGE_TO_KEY = "ghtrack:rangeTo";
   const BREAKDOWN_LEVEL_KEY = "ghtrack:breakdownLevel";
+  const TOTAL_BUCKET_KEY = "ghtrack:totalBucket";
   const DAY_MS = 86400000;
   const OTHER_COLOR = "#8b949e";
 
   function getBreakdownLevel() {
     const v = lsGet(BREAKDOWN_LEVEL_KEY, "jobs");
     return v === "steps" ? "steps" : "jobs";
+  }
+
+  function getTotalBucket() {
+    const v = lsGet(TOTAL_BUCKET_KEY, "run");
+    return v === "day" || v === "week" ? v : "run";
+  }
+
+  // ローカルタイムで日/週の先頭にスナップした timestamp を返す。
+  // 週は月曜始まり (ISO) で扱う。
+  function bucketStart(ms, bucket) {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    if (bucket === "week") {
+      // getDay(): 0=Sun, 1=Mon, ... 月曜始まりにオフセット
+      const dow = d.getDay();
+      const diff = (dow + 6) % 7;
+      d.setDate(d.getDate() - diff);
+    }
+    return d.getTime();
+  }
+
+  function isBucketed(bucket) {
+    return bucket === "day" || bucket === "week";
+  }
+
+  // items を { date } を持つ前提で bucket 単位にまとめ、key 昇順に返す。
+  function groupByBucket(items, bucket) {
+    const groups = new Map();
+    for (const it of items) {
+      const key = bucketStart(it.date, bucket);
+      let g = groups.get(key);
+      if (!g) { g = { key, items: [] }; groups.set(key, g); }
+      g.items.push(it);
+    }
+    return [...groups.values()].sort((a, b) => a.key - b.key);
+  }
+
+  function applyBucketAxis(opts, bucket) {
+    opts.scales.x.time.minUnit = bucket === "week" ? "week" : "day";
+    opts.scales.x.time.tooltipFormat = "yyyy-MM-dd";
+  }
+
+  function bucketTooltipHeader(point) {
+    const start = new Date(point.x);
+    const dateLabel = start.toLocaleDateString();
+    return [
+      point.bucket === "week"
+        ? t(`week of ${dateLabel}`, `${dateLabel} の週`)
+        : dateLabel,
+      t(`${point.bucketCount} run(s) averaged`,
+        `${point.bucketCount} 件の平均`),
+    ];
+  }
+
+  function bucketAvgLabel(bucket) {
+    if (bucket === "week") {
+      return t("Total duration (sec) · weekly avg",
+        "Total duration (sec) · 週平均");
+    }
+    return t("Total duration (sec) · daily avg",
+      "Total duration (sec) · 日平均");
   }
 
   function lsGet(key, fallback) {
@@ -417,7 +491,7 @@
     el.parentNode.replaceChild(div, el);
   }
 
-  function buildTotalChart(entries, canvasId, emptyMessage) {
+  function buildTotalChart(entries, canvasId, bucket, emptyMessage) {
     const usable = entries.filter((e) => typeof e.total_duration_sec === "number");
     if (usable.length === 0) {
       replaceWithEmpty(canvasId, emptyMessage ||
@@ -428,12 +502,35 @@
     const canvas = prepareCanvas(canvasId);
     if (!canvas) return;
     const color = colorAt(0);
+
+    const bucketed = isBucketed(bucket);
+    const points = bucketed
+      ? groupByBucket(usable, bucket).map(({ key, items }) => {
+          const sum = items.reduce((s, e) => s + e.total_duration_sec, 0);
+          return { x: key, y: sum / items.length, bucketCount: items.length, bucket };
+        })
+      : usable.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e }));
+
+    const opts = chartOptions((point) => {
+      if (point && point.bucket) {
+        return [...bucketTooltipHeader(point), `avg: ${Math.round(point.y)}s`];
+      }
+      const e = point && point.raw;
+      if (!e) return [];
+      return [
+        `commit ${String(e.commit).slice(0, 7)}`,
+        `event: ${e.event}`,
+        e.run_attempt && e.run_attempt > 1 ? `run_attempt: ${e.run_attempt}` : null,
+      ];
+    });
+    if (bucketed) applyBucketAxis(opts, bucket);
+
     new Chart(canvas, {
       type: "line",
       data: {
         datasets: [{
-          label: "Total duration (sec)",
-          data: usable.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e })),
+          label: bucketed ? bucketAvgLabel(bucket) : "Total duration (sec)",
+          data: points,
           borderColor: color,
           backgroundColor: color + "26",
           tension: 0.25,
@@ -441,15 +538,7 @@
           pointRadius: 3,
         }],
       },
-      options: chartOptions((point) => {
-        const e = point.raw;
-        if (!e) return [];
-        return [
-          `commit ${String(e.commit).slice(0, 7)}`,
-          `event: ${e.event}`,
-          e.run_attempt && e.run_attempt > 1 ? `run_attempt: ${e.run_attempt}` : null,
-        ];
-      }),
+      options: opts,
     });
   }
 
@@ -586,7 +675,7 @@
     return opts;
   }
 
-  function buildBreakdownChart(entries, canvasId, metaId, level, groupMatrix, emptyMessage) {
+  function buildBreakdownChart(entries, canvasId, metaId, level, groupMatrix, bucket, emptyMessage) {
     const setMeta = (text) => {
       const m = metaId ? document.getElementById(metaId) : null;
       if (m) m.textContent = text;
@@ -627,14 +716,39 @@
     const otherKeys = sorted.slice(TOP_N).map(([k]) => k);
     const hasOther = otherKeys.length > 0;
 
+    // bucket = day/week のときは entries を bucket 単位にまとめ、
+    // 各 segment の duration を bucket 内で平均化する。
+    const bucketed = isBucketed(bucket);
+    const withSeg = entries.map((entry, idx) => ({
+      date: entry.date,
+      entry,
+      segMap: perEntry[idx],
+    }));
+    const xUnits = bucketed
+      ? groupByBucket(withSeg, bucket).map(({ key, items }) => {
+          const sums = new Map();
+          for (const { segMap } of items) {
+            for (const [k, v] of segMap) sums.set(k, (sums.get(k) || 0) + v);
+          }
+          const avgMap = new Map();
+          for (const [k, s] of sums) avgMap.set(k, s / items.length);
+          return { x: key, segMap: avgMap, count: items.length };
+        })
+      : withSeg.map((u) => ({ x: u.date, segMap: u.segMap, raw: u.entry }));
+
+    const segLabel = level === "steps" ? "step" : "job";
+    const bucketField = bucketed ? bucket : null;
+
     const datasets = topKeys.map((key, i) => {
       const color = colorAt(i);
       return {
         label: key,
-        data: entries.map((entry, idx) => ({
-          x: entry.date,
-          y: perEntry[idx].get(key) || 0,
-          raw: entry,
+        data: xUnits.map((u) => ({
+          x: u.x,
+          y: u.segMap.get(key) || 0,
+          raw: u.raw,
+          bucketCount: u.count,
+          bucket: bucketField,
           segName: key,
         })),
         backgroundColor: color,
@@ -647,15 +761,17 @@
       const topSet = new Set(topKeys);
       datasets.push({
         label: `other (${otherKeys.length})`,
-        data: entries.map((entry, idx) => {
+        data: xUnits.map((u) => {
           let sum = 0;
-          for (const [k, v] of perEntry[idx]) {
+          for (const [k, v] of u.segMap) {
             if (!topSet.has(k)) sum += v;
           }
           return {
-            x: entry.date,
+            x: u.x,
             y: sum,
-            raw: entry,
+            raw: u.raw,
+            bucketCount: u.count,
+            bucket: bucketField,
             segName: "other",
             otherCount: otherKeys.length,
           };
@@ -667,26 +783,35 @@
       });
     }
 
-    new Chart(canvas, {
-      type: "bar",
-      data: { datasets },
-      options: stackedBarOptions((point) => {
-        if (!point || !point.raw) return [];
-        const lines = [`commit ${String(point.raw.commit).slice(0, 7)}`];
-        if (point.segName === "other") {
-          lines.push(`other: ${point.otherCount} ${level} grouped`);
-        } else {
-          lines.push(`${level === "steps" ? "step" : "job"}: ${point.segName}`);
-        }
-        lines.push(`duration: ${Math.round(point.y)}s`);
-        return lines;
-      }),
+    const opts = stackedBarOptions((point) => {
+      if (!point) return [];
+      const lines = [];
+      if (point.bucket) {
+        lines.push(...bucketTooltipHeader(point));
+      } else if (point.raw) {
+        lines.push(`commit ${String(point.raw.commit).slice(0, 7)}`);
+      }
+      if (point.segName === "other") {
+        lines.push(`other: ${point.otherCount} ${level} grouped`);
+      } else {
+        lines.push(`${segLabel}: ${point.segName}`);
+      }
+      lines.push(`${point.bucket ? "avg" : "duration"}: ${Math.round(point.y)}s`);
+      return lines;
     });
+    if (bucketed) applyBucketAxis(opts, bucket);
+
+    new Chart(canvas, { type: "bar", data: { datasets }, options: opts });
 
     const noteParts = [];
     if (hasOther) noteParts.push(`top ${topKeys.length} of ${totals.size} ${level}`);
     else noteParts.push(`${totals.size} ${level}`);
     if (groupMatrix) noteParts.push("matrix aggregated");
+    if (bucketed) {
+      noteParts.push(bucket === "week"
+        ? t("weekly avg", "週平均")
+        : t("daily avg", "日平均"));
+    }
     noteParts.push(t(
       "stacks may exceed Total due to parallel execution",
       "並列実行のため Total Duration とは一致しません"));
@@ -912,6 +1037,7 @@
       const renderAllCharts = () => {
         const groupMatrix = getMatrixGrouping();
         const level = getBreakdownLevel();
+        const bucket = getTotalBucket();
         const range = getActiveRange();
         const hasFilter = range.from !== null || range.to !== null;
         const emptyMsg = hasFilter
@@ -920,8 +1046,8 @@
         for (const target of chartTargets) {
           const filtered = filterByRange(target.source.entries, range);
           renderSummary(filtered, target.summaryId, hasFilter);
-          buildTotalChart(filtered, target.totalCanvasId, emptyMsg);
-          buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, emptyMsg);
+          buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
+          buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, bucket, emptyMsg);
           buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
         }
       };
@@ -940,6 +1066,15 @@
         breakdownSelect.value = getBreakdownLevel();
         breakdownSelect.addEventListener("change", () => {
           lsSet(BREAKDOWN_LEVEL_KEY, breakdownSelect.value);
+          renderAllCharts();
+        });
+      }
+
+      const totalBucketSelect = document.getElementById("totalBucket");
+      if (totalBucketSelect) {
+        totalBucketSelect.value = getTotalBucket();
+        totalBucketSelect.addEventListener("change", () => {
+          lsSet(TOTAL_BUCKET_KEY, totalBucketSelect.value);
           renderAllCharts();
         });
       }
