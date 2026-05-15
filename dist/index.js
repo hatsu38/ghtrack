@@ -36392,7 +36392,29 @@ function emptyManifest() {
     return { schema_version: MANIFEST_SCHEMA_VERSION, sources: [] };
 }
 
+;// CONCATENATED MODULE: ./src/workflow-file.ts
+// GITHUB_WORKFLOW_REF 例:
+//   "<owner>/<repo>/.github/workflows/test.yml@refs/heads/main"
+// ファイル名ベース (basename) は workflow YAML の name 属性より安定しており、
+// ユーザーが name を変更してもデータの蓄積先が変わらない。
+function resolveWorkflowFileBasename() {
+    const ref = process.env.GITHUB_WORKFLOW_REF ?? "";
+    const beforeAt = ref.split("@")[0] ?? "";
+    const parts = beforeAt.split("/");
+    return parts[parts.length - 1] ?? "";
+}
+function defaultDataFilePath() {
+    const basename = resolveWorkflowFileBasename();
+    if (basename === "") {
+        throw new Error("Could not resolve the workflow file name from GITHUB_WORKFLOW_REF. " +
+            "Set `data-file-path` explicitly to override.");
+    }
+    const stem = basename.replace(/\.ya?ml$/i, "");
+    return `data/${stem}.json`;
+}
+
 ;// CONCATENATED MODULE: ./src/collect.ts
+
 
 
 async function collectEntry({ octokit, owner, repo, context, }) {
@@ -36416,7 +36438,7 @@ async function collectEntry({ octokit, owner, repo, context, }) {
         event: context.eventName,
         date: Date.now(),
         workflow: context.workflow,
-        workflow_file: resolveWorkflowFile(),
+        workflow_file: resolveWorkflowFileBasename(),
         run_id: runId,
         run_attempt: resolveRunAttempt(),
         total_duration_sec: computeTotalDurationSec(jobs),
@@ -36466,14 +36488,6 @@ function resolveBranch(context) {
         return context.ref.slice("refs/heads/".length);
     }
     return null;
-}
-function resolveWorkflowFile() {
-    // GITHUB_WORKFLOW_REF 例:
-    //   "<owner>/<repo>/.github/workflows/test.yml@refs/heads/main"
-    const ref = process.env.GITHUB_WORKFLOW_REF ?? "";
-    const beforeAt = ref.split("@")[0] ?? "";
-    const parts = beforeAt.split("/");
-    return parts[parts.length - 1] ?? "";
 }
 function resolveRunAttempt() {
     const raw = process.env.GITHUB_RUN_ATTEMPT;
@@ -36669,9 +36683,6 @@ const INDEX_HTML_LOCAL_PATH = "assets/index.html";
 async function writeEntryToGhPages(args) {
     const branchExists = await branchExistsOnRemote(args);
     if (!branchExists) {
-        if (!args.inputs.autoCreateBranch) {
-            throw new Error(`Branch "${args.inputs.ghPagesBranch}" does not exist and auto-create-branch is disabled.`);
-        }
         const bootstrapped = await bootstrapBranch(args);
         if (bootstrapped)
             return;
@@ -37000,8 +37011,13 @@ function storage_sleep(ms) {
 
 
 
+
 async function run() {
     try {
+        if (isForkPullRequest(github_context)) {
+            notice("Skipping ghtrack: running on a pull_request from a fork (no write access to base repo).");
+            return;
+        }
         const inputs = resolveInputs();
         core_setSecret(inputs.token);
         const octokit = getOctokit(inputs.token);
@@ -37012,11 +37028,6 @@ async function run() {
             repo,
             context: github_context,
         });
-        const skipReason = decideSkip(github_context, inputs);
-        if (skipReason !== null) {
-            notice(`Skipping push: ${skipReason}`);
-            return;
-        }
         await writeEntryToGhPages({ octokit, owner, repo, inputs, entry });
     }
     catch (err) {
@@ -37029,11 +37040,8 @@ function resolveInputs() {
     return {
         token: getInput("github-token", { required: true }),
         ghPagesBranch: getInput("gh-pages-branch") || "gh-pages",
-        dataFilePath: getInput("data-file-path") || "data/data.json",
-        autoPush: getBooleanInput("auto-push"),
-        autoCreateBranch: getBooleanInput("auto-create-branch"),
+        dataFilePath: getInput("data-file-path") || defaultDataFilePath(),
         maxItemsInHistory,
-        skipForkPr: getBooleanInput("skip-fork-pr"),
     };
 }
 function parsePositiveInt(raw, name) {
@@ -37042,15 +37050,6 @@ function parsePositiveInt(raw, name) {
         throw new Error(`Invalid value for ${name}: "${raw}" — must be a positive integer.`);
     }
     return n;
-}
-function decideSkip(context, inputs) {
-    if (!inputs.autoPush) {
-        return "auto-push is disabled";
-    }
-    if (inputs.skipForkPr && isForkPullRequest(context)) {
-        return "running on a pull_request from a fork (no write access to base repo)";
-    }
-    return null;
 }
 function isForkPullRequest(context) {
     if (context.eventName !== "pull_request" &&

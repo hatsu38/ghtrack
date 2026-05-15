@@ -41,10 +41,7 @@ export interface Inputs {
   token: string;
   ghPagesBranch: string;
   dataFilePath: string;
-  autoPush: boolean;
-  autoCreateBranch: boolean;
   maxItemsInHistory: number | null;
-  skipForkPr: boolean;
 }
 
 export function emptyDataFile(): DataFile {

@@ -3,9 +3,17 @@ import * as github from "@actions/github";
 import { collectEntry } from "./collect";
 import { writeEntryToGhPages } from "./storage";
 import type { Inputs } from "./types";
+import { defaultDataFilePath } from "./workflow-file";
 
 async function run(): Promise<void> {
   try {
+    if (isForkPullRequest(github.context)) {
+      core.notice(
+        "Skipping ghtrack: running on a pull_request from a fork (no write access to base repo).",
+      );
+      return;
+    }
+
     const inputs = resolveInputs();
     core.setSecret(inputs.token);
 
@@ -18,12 +26,6 @@ async function run(): Promise<void> {
       repo,
       context: github.context,
     });
-
-    const skipReason = decideSkip(github.context, inputs);
-    if (skipReason !== null) {
-      core.notice(`Skipping push: ${skipReason}`);
-      return;
-    }
 
     await writeEntryToGhPages({ octokit, owner, repo, inputs, entry });
   } catch (err) {
@@ -39,11 +41,8 @@ function resolveInputs(): Inputs {
   return {
     token: core.getInput("github-token", { required: true }),
     ghPagesBranch: core.getInput("gh-pages-branch") || "gh-pages",
-    dataFilePath: core.getInput("data-file-path") || "data/data.json",
-    autoPush: core.getBooleanInput("auto-push"),
-    autoCreateBranch: core.getBooleanInput("auto-create-branch"),
+    dataFilePath: core.getInput("data-file-path") || defaultDataFilePath(),
     maxItemsInHistory,
-    skipForkPr: core.getBooleanInput("skip-fork-pr"),
   };
 }
 
@@ -53,19 +52,6 @@ function parsePositiveInt(raw: string, name: string): number {
     throw new Error(`Invalid value for ${name}: "${raw}" — must be a positive integer.`);
   }
   return n;
-}
-
-function decideSkip(
-  context: typeof github.context,
-  inputs: Inputs,
-): string | null {
-  if (!inputs.autoPush) {
-    return "auto-push is disabled";
-  }
-  if (inputs.skipForkPr && isForkPullRequest(context)) {
-    return "running on a pull_request from a fork (no write access to base repo)";
-  }
-  return null;
 }
 
 function isForkPullRequest(context: typeof github.context): boolean {

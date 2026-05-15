@@ -2,6 +2,7 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import type { Entry, JobEntry, StepEntry } from "./types";
 import { SCHEMA_VERSION } from "./types";
+import { resolveWorkflowFileBasename } from "./workflow-file";
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 type Context = typeof github.context;
@@ -46,7 +47,7 @@ export async function collectEntry({
     event: context.eventName,
     date: Date.now(),
     workflow: context.workflow,
-    workflow_file: resolveWorkflowFile(),
+    workflow_file: resolveWorkflowFileBasename(),
     run_id: runId,
     run_attempt: resolveRunAttempt(),
     total_duration_sec: computeTotalDurationSec(jobs),
@@ -113,15 +114,6 @@ function resolveBranch(context: Context): string | null {
     return context.ref.slice("refs/heads/".length);
   }
   return null;
-}
-
-function resolveWorkflowFile(): string {
-  // GITHUB_WORKFLOW_REF 例:
-  //   "<owner>/<repo>/.github/workflows/test.yml@refs/heads/main"
-  const ref = process.env.GITHUB_WORKFLOW_REF ?? "";
-  const beforeAt = ref.split("@")[0] ?? "";
-  const parts = beforeAt.split("/");
-  return parts[parts.length - 1] ?? "";
 }
 
 function resolveRunAttempt(): number {
