@@ -400,7 +400,7 @@
 
   // preset / from / to から実際の数値範囲を返す。null は未指定。
   function getActiveRange() {
-    const preset = lsGet(RANGE_PRESET_KEY, "all");
+    const preset = lsGet(RANGE_PRESET_KEY, "30d");
     const now = Date.now();
     if (preset === "7d") return { from: now - 7 * DAY_MS, to: null };
     if (preset === "30d") return { from: now - 30 * DAY_MS, to: null };
@@ -886,7 +886,7 @@
 
   function deriveSourceTitle(source) {
     const e = source.entries[0];
-    return e.workflow || e.workflow_file || source.path;
+    return (e && (e.workflow || e.workflow_file)) || source.track_name || source.dir;
   }
 
   function renderSourceSection(source, idx, container) {
@@ -896,6 +896,7 @@
     const summaryId = `summary-${idx}`;
     const breakdownCanvasId = `breakdown-${idx}`;
     const breakdownMetaId = `breakdown-meta-${idx}`;
+    const sourceMetaId = `source-meta-${idx}`;
 
     const section = document.createElement("section");
     section.className = "source";
@@ -906,13 +907,9 @@
 
     const meta = document.createElement("p");
     meta.className = "source-meta";
-    const latest = source.entries.length > 0
-      ? new Date(source.entries[source.entries.length - 1].date).toLocaleString()
-      : null;
-    meta.textContent =
-      `${source.path} · ${source.entries.length} run(s)` +
-      (latest ? ` (latest: ${latest})` : "");
+    meta.id = sourceMetaId;
     section.appendChild(meta);
+    updateSourceMeta(source, meta);
 
     const summary = document.createElement("div");
     summary.className = "summary";
@@ -972,7 +969,24 @@
       summaryId,
       breakdownCanvasId,
       breakdownMetaId,
+      sourceMetaId,
     };
+  }
+
+  function updateSourceMeta(source, metaEl) {
+    const latest = source.entries.length > 0
+      ? new Date(source.entries[source.entries.length - 1].date).toLocaleString()
+      : null;
+    const totalRuns = typeof source.totalRuns === "number"
+      ? source.totalRuns
+      : source.entries.length;
+    const loaded = source.entries.length;
+    const countText = loaded === totalRuns
+      ? `${loaded} run(s)`
+      : `${loaded}/${totalRuns} run(s) loaded`;
+    metaEl.textContent =
+      `${source.dir} · ${countText}` +
+      (latest ? ` (latest: ${latest})` : "");
   }
 
   function fetchJson(path) {
@@ -982,40 +996,84 @@
     });
   }
 
-  // manifest が gh-pages に必ず存在する前提。manifest が無い (= まだ Action が
-  // 一度も実行されていない) ケースでは空配列を返し、empty 表示に倒す。
-  function resolveSourcePaths() {
+  function normalizePath(p) {
+    return p.startsWith("./") || p.startsWith("/") ? p : `./${p}`;
+  }
+
+  // manifest (schema_version=2) は workflows[] を持つ前提。
+  // manifest が無い (= まだ Action が一度も実行されていない) ケースでは空配列を返す。
+  function loadManifest() {
     return fetchJson("./data/manifest.json")
       .then((m) => {
-        if (!m || !Array.isArray(m.sources) || m.sources.length === 0) {
-          return [];
-        }
-        return m.sources
-          .map((s) => s && typeof s.path === "string" ? s.path : null)
-          .filter((p) => p !== null)
-          .map((p) => p.startsWith("./") || p.startsWith("/") ? p : `./${p}`);
+        if (!m || !Array.isArray(m.workflows)) return [];
+        return m.workflows.filter(
+          (w) => w && typeof w.track_name === "string" && typeof w.dir === "string",
+        );
       })
       .catch(() => []);
   }
 
-  resolveSourcePaths()
-    .then((paths) => Promise.all(
-      paths.map((p) => fetchJson(p)
-        .then((data) => ({ path: p, data }))
-        .catch((err) => {
-          console.warn(`ghtrack: failed to load ${p}: ${err.message}`);
-          return { path: p, data: { entries: [] } };
-        })),
-    ))
-    .then((sources) => {
-      const sourcesData = sources.map((s) => ({
-        path: s.path,
-        entries: (s.data && Array.isArray(s.data.entries) ? s.data.entries : [])
-          .slice()
-          .sort((a, b) => a.date - b.date),
-      }));
+  function loadWorkflowIndex(workflow) {
+    const indexPath = `${normalizePath(workflow.dir)}/index.json`;
+    return fetchJson(indexPath)
+      .then((idx) => {
+        if (!idx || !Array.isArray(idx.runs)) return { ...workflow, runs: [] };
+        return { ...workflow, runs: idx.runs };
+      })
+      .catch((err) => {
+        console.warn(`ghtrack: failed to load index for ${workflow.track_name}: ${err.message}`);
+        return { ...workflow, runs: [] };
+      });
+  }
 
-      const populated = sourcesData.filter((s) => s.entries.length > 0);
+  function runFilePath(workflow, run) {
+    return `${normalizePath(workflow.dir)}/${run.date}/${run.run_id}-${run.run_attempt}.json`;
+  }
+
+  // "YYYY/MM/DD" を UTC 0:00 のミリ秒へ。
+  function parseDateStrToMs(str) {
+    const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(str);
+    if (!m) return null;
+    return Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+  }
+
+  // range 内の run を抽出。run.date は日単位なので日境界で包含判定する。
+  // entry.date (ミリ秒) が範囲外の per-run ファイルは描画時の filterByRange で再フィルタされる。
+  function runsInRange(runs, range) {
+    if (range.from === null && range.to === null) return runs;
+    return runs.filter((run) => {
+      const dayMs = parseDateStrToMs(run.date);
+      if (dayMs === null) return true;
+      const dayEnd = dayMs + DAY_MS - 1;
+      if (range.from !== null && dayEnd < range.from) return false;
+      if (range.to !== null && dayMs > range.to) return false;
+      return true;
+    });
+  }
+
+  function fetchRunsWithCache(workflow, runs, cache) {
+    return Promise.all(
+      runs.map((run) => {
+        const key = `${workflow.track_name}|${run.run_id}|${run.run_attempt}`;
+        const cached = cache.get(key);
+        if (cached) return Promise.resolve(cached);
+        return fetchJson(runFilePath(workflow, run))
+          .then((entry) => {
+            cache.set(key, entry);
+            return entry;
+          })
+          .catch((err) => {
+            console.warn(`ghtrack: failed to load ${runFilePath(workflow, run)}: ${err.message}`);
+            return null;
+          });
+      }),
+    ).then((entries) => entries.filter((e) => e !== null));
+  }
+
+  loadManifest()
+    .then((workflows) => Promise.all(workflows.map(loadWorkflowIndex)))
+    .then((workflowsWithRuns) => {
+      const populated = workflowsWithRuns.filter((w) => w.runs.length > 0);
       const container = document.getElementById("sources");
 
       if (populated.length === 0) {
@@ -1028,10 +1086,16 @@
         return;
       }
 
-      const chartTargets = [];
-      populated.forEach((source, i) => {
-        const target = renderSourceSection(source, i, container);
-        if (target) chartTargets.push(target);
+      const cache = new Map();
+      const chartTargets = populated.map((wf, i) => {
+        const source = {
+          track_name: wf.track_name,
+          dir: wf.dir,
+          runs: wf.runs,
+          totalRuns: wf.runs.length,
+          entries: [],
+        };
+        return renderSourceSection(source, i, container);
       });
 
       const renderAllCharts = () => {
@@ -1049,8 +1113,29 @@
           buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
           buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, bucket, emptyMsg);
           buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
+          const metaEl = document.getElementById(target.sourceMetaId);
+          updateSourceMeta(target.source, metaEl);
         }
       };
+
+      const loadEntriesForCurrentRange = () => {
+        const range = getActiveRange();
+        return Promise.all(
+          chartTargets.map((target) => {
+            const wfRunsToFetch = runsInRange(target.source.runs, range);
+            return fetchRunsWithCache(target.source, wfRunsToFetch, cache).then(
+              (entries) => {
+                target.source.entries = entries
+                  .slice()
+                  .sort((a, b) => a.date - b.date);
+              },
+            );
+          }),
+        );
+      };
+
+      const reloadAndRender = () =>
+        loadEntriesForCurrentRange().then(renderAllCharts);
 
       const toggle = document.getElementById("groupMatrixToggle");
       if (toggle) {
@@ -1087,31 +1172,31 @@
         if (customRange) customRange.hidden = preset !== "custom";
       };
       if (rangePreset) {
-        const initial = lsGet(RANGE_PRESET_KEY, "all");
+        const initial = lsGet(RANGE_PRESET_KEY, "30d");
         rangePreset.value = initial;
         updateCustomVisibility(initial);
         rangePreset.addEventListener("change", () => {
           lsSet(RANGE_PRESET_KEY, rangePreset.value);
           updateCustomVisibility(rangePreset.value);
-          renderAllCharts();
+          reloadAndRender();
         });
       }
       if (rangeFrom) {
         rangeFrom.value = lsGet(RANGE_FROM_KEY, "");
         rangeFrom.addEventListener("change", () => {
           lsSet(RANGE_FROM_KEY, rangeFrom.value);
-          renderAllCharts();
+          reloadAndRender();
         });
       }
       if (rangeTo) {
         rangeTo.value = lsGet(RANGE_TO_KEY, "");
         rangeTo.addEventListener("change", () => {
           lsSet(RANGE_TO_KEY, rangeTo.value);
-          renderAllCharts();
+          reloadAndRender();
         });
       }
 
-      renderAllCharts();
+      return reloadAndRender();
     })
     .catch((err) => {
       const container = document.getElementById("sources");

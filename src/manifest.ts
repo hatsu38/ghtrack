@@ -1,6 +1,6 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
-import type { Inputs, Manifest, ManifestSource } from "./types";
+import type { Inputs, Manifest, ManifestWorkflow } from "./types";
 import { MANIFEST_SCHEMA_VERSION, emptyManifest } from "./types";
 
 type Octokit = ReturnType<typeof github.getOctokit>;
@@ -15,6 +15,10 @@ const COMMITTER = {
 const MAX_PUSH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 500;
 
+export function workflowDir(trackName: string): string {
+  return `data/${trackName}`;
+}
+
 export interface EnsureManifestArgs {
   octokit: Octokit;
   owner: string;
@@ -22,17 +26,17 @@ export interface EnsureManifestArgs {
   inputs: Inputs;
 }
 
-// 利用者が data-file-path を分けて複数 workflow から同一 repo に蓄積するケースを
-// dashboard が描画できるよう、自分の path を data/manifest.json に upsert する。
-// 既登録なら no-op で API call も発生しない。
+// 同一リポジトリ内で複数 workflow から track している場合に、dashboard が一覧
+// できるよう自分の track_name を data/manifest.json に upsert する。既登録なら
+// 書き込みは行わない (= API call も commit も発生しない)。
 export async function ensureManifestEntry(args: EnsureManifestArgs): Promise<void> {
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
     try {
       const upserted = await upsertOnce(args);
       if (!upserted) {
-        core.info(`Manifest already lists ${args.inputs.dataFilePath}; skipping write.`);
+        core.info(`Manifest already lists ${args.inputs.trackName}; skipping write.`);
       } else {
-        core.info(`Updated ${MANIFEST_FILE_PATH} with ${args.inputs.dataFilePath}.`);
+        core.info(`Updated ${MANIFEST_FILE_PATH} with ${args.inputs.trackName}.`);
       }
       return;
     } catch (err) {
@@ -55,12 +59,13 @@ interface ReadResult {
 
 async function upsertOnce(args: EnsureManifestArgs): Promise<boolean> {
   const existing = await readManifest(args);
-  if (existing.manifest.sources.some((s) => s.path === args.inputs.dataFilePath)) {
+  if (existing.manifest.workflows.some((w) => w.track_name === args.inputs.trackName)) {
     return false;
   }
 
-  const next = appendSource(existing.manifest, {
-    path: args.inputs.dataFilePath,
+  const next = appendWorkflow(existing.manifest, {
+    track_name: args.inputs.trackName,
+    dir: workflowDir(args.inputs.trackName),
     first_seen: Date.now(),
   });
 
@@ -69,7 +74,7 @@ async function upsertOnce(args: EnsureManifestArgs): Promise<boolean> {
     repo: args.repo,
     path: MANIFEST_FILE_PATH,
     branch: args.inputs.ghPagesBranch,
-    message: `chore(ghtrack): register ${args.inputs.dataFilePath} in manifest`,
+    message: `chore(ghtrack): register ${args.inputs.trackName} in manifest`,
     content: Buffer.from(serializeManifest(next), "utf-8").toString("base64"),
     sha: existing.fileSha ?? undefined,
     author: COMMITTER,
@@ -124,25 +129,30 @@ function parseManifest(text: string): Manifest {
 
 function isManifest(value: unknown): value is Manifest {
   if (typeof value !== "object" || value === null) return false;
-  const candidate = value as { schema_version?: unknown; sources?: unknown };
+  const candidate = value as { schema_version?: unknown; workflows?: unknown };
   if (candidate.schema_version !== MANIFEST_SCHEMA_VERSION) return false;
-  if (!Array.isArray(candidate.sources)) return false;
-  return candidate.sources.every(isManifestSource);
+  if (!Array.isArray(candidate.workflows)) return false;
+  return candidate.workflows.every(isManifestWorkflow);
 }
 
-function isManifestSource(value: unknown): value is ManifestSource {
+function isManifestWorkflow(value: unknown): value is ManifestWorkflow {
   if (typeof value !== "object" || value === null) return false;
-  const candidate = value as { path?: unknown; first_seen?: unknown };
+  const candidate = value as {
+    track_name?: unknown;
+    dir?: unknown;
+    first_seen?: unknown;
+  };
   return (
-    typeof candidate.path === "string" &&
+    typeof candidate.track_name === "string" &&
+    typeof candidate.dir === "string" &&
     typeof candidate.first_seen === "number"
   );
 }
 
-function appendSource(manifest: Manifest, source: ManifestSource): Manifest {
+function appendWorkflow(manifest: Manifest, workflow: ManifestWorkflow): Manifest {
   return {
     schema_version: MANIFEST_SCHEMA_VERSION,
-    sources: [...manifest.sources, source],
+    workflows: [...manifest.workflows, workflow],
   };
 }
 
@@ -150,9 +160,10 @@ export function serializeManifest(manifest: Manifest): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-export function buildInitialManifest(dataFilePath: string): Manifest {
-  return appendSource(emptyManifest(), {
-    path: dataFilePath,
+export function buildInitialManifest(trackName: string): Manifest {
+  return appendWorkflow(emptyManifest(), {
+    track_name: trackName,
+    dir: workflowDir(trackName),
     first_seen: Date.now(),
   });
 }

@@ -36384,12 +36384,18 @@ function getOctokit(token, options, ...additionalPlugins) {
 //# sourceMappingURL=github.js.map
 ;// CONCATENATED MODULE: ./src/types.ts
 const SCHEMA_VERSION = 1;
-const MANIFEST_SCHEMA_VERSION = 1;
-function emptyDataFile() {
-    return { schema_version: SCHEMA_VERSION, entries: [] };
-}
+const MANIFEST_SCHEMA_VERSION = 2;
+const WORKFLOW_INDEX_SCHEMA_VERSION = 1;
 function emptyManifest() {
-    return { schema_version: MANIFEST_SCHEMA_VERSION, sources: [] };
+    return { schema_version: MANIFEST_SCHEMA_VERSION, workflows: [] };
+}
+function emptyWorkflowIndex(trackName) {
+    return {
+        schema_version: WORKFLOW_INDEX_SCHEMA_VERSION,
+        track_name: trackName,
+        runs: [],
+        last_updated: 0,
+    };
 }
 
 ;// CONCATENATED MODULE: ./src/workflow-file.ts
@@ -36403,14 +36409,22 @@ function resolveWorkflowFileBasename() {
     const parts = beforeAt.split("/");
     return parts[parts.length - 1] ?? "";
 }
-function defaultDataFilePath() {
+const TRACK_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+function validateTrackName(name) {
+    if (!TRACK_NAME_PATTERN.test(name)) {
+        throw new Error(`Invalid track-name "${name}". Must match ${TRACK_NAME_PATTERN.source} ` +
+            "(alphanumeric, dot, underscore, hyphen).");
+    }
+}
+function defaultTrackName() {
     const basename = resolveWorkflowFileBasename();
     if (basename === "") {
         throw new Error("Could not resolve the workflow file name from GITHUB_WORKFLOW_REF. " +
-            "Set `data-file-path` explicitly to override.");
+            "Set `track-name` explicitly to override.");
     }
     const stem = basename.replace(/\.ya?ml$/i, "");
-    return `data/${stem}.json`;
+    validateTrackName(stem);
+    return stem;
 }
 
 ;// CONCATENATED MODULE: ./src/collect.ts
@@ -36532,18 +36546,21 @@ const COMMITTER = {
 };
 const MAX_PUSH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 500;
-// 利用者が data-file-path を分けて複数 workflow から同一 repo に蓄積するケースを
-// dashboard が描画できるよう、自分の path を data/manifest.json に upsert する。
-// 既登録なら no-op で API call も発生しない。
+function workflowDir(trackName) {
+    return `data/${trackName}`;
+}
+// 同一リポジトリ内で複数 workflow から track している場合に、dashboard が一覧
+// できるよう自分の track_name を data/manifest.json に upsert する。既登録なら
+// 書き込みは行わない (= API call も commit も発生しない)。
 async function ensureManifestEntry(args) {
     for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
         try {
             const upserted = await upsertOnce(args);
             if (!upserted) {
-                info(`Manifest already lists ${args.inputs.dataFilePath}; skipping write.`);
+                info(`Manifest already lists ${args.inputs.trackName}; skipping write.`);
             }
             else {
-                info(`Updated ${MANIFEST_FILE_PATH} with ${args.inputs.dataFilePath}.`);
+                info(`Updated ${MANIFEST_FILE_PATH} with ${args.inputs.trackName}.`);
             }
             return;
         }
@@ -36560,11 +36577,12 @@ async function ensureManifestEntry(args) {
 }
 async function upsertOnce(args) {
     const existing = await readManifest(args);
-    if (existing.manifest.sources.some((s) => s.path === args.inputs.dataFilePath)) {
+    if (existing.manifest.workflows.some((w) => w.track_name === args.inputs.trackName)) {
         return false;
     }
-    const next = appendSource(existing.manifest, {
-        path: args.inputs.dataFilePath,
+    const next = appendWorkflow(existing.manifest, {
+        track_name: args.inputs.trackName,
+        dir: workflowDir(args.inputs.trackName),
         first_seen: Date.now(),
     });
     await args.octokit.rest.repos.createOrUpdateFileContents({
@@ -36572,7 +36590,7 @@ async function upsertOnce(args) {
         repo: args.repo,
         path: MANIFEST_FILE_PATH,
         branch: args.inputs.ghPagesBranch,
-        message: `chore(ghtrack): register ${args.inputs.dataFilePath} in manifest`,
+        message: `chore(ghtrack): register ${args.inputs.trackName} in manifest`,
         content: Buffer.from(serializeManifest(next), "utf-8").toString("base64"),
         sha: existing.fileSha ?? undefined,
         author: COMMITTER,
@@ -36626,29 +36644,31 @@ function isManifest(value) {
     const candidate = value;
     if (candidate.schema_version !== MANIFEST_SCHEMA_VERSION)
         return false;
-    if (!Array.isArray(candidate.sources))
+    if (!Array.isArray(candidate.workflows))
         return false;
-    return candidate.sources.every(isManifestSource);
+    return candidate.workflows.every(isManifestWorkflow);
 }
-function isManifestSource(value) {
+function isManifestWorkflow(value) {
     if (typeof value !== "object" || value === null)
         return false;
     const candidate = value;
-    return (typeof candidate.path === "string" &&
+    return (typeof candidate.track_name === "string" &&
+        typeof candidate.dir === "string" &&
         typeof candidate.first_seen === "number");
 }
-function appendSource(manifest, source) {
+function appendWorkflow(manifest, workflow) {
     return {
         schema_version: MANIFEST_SCHEMA_VERSION,
-        sources: [...manifest.sources, source],
+        workflows: [...manifest.workflows, workflow],
     };
 }
 function serializeManifest(manifest) {
     return `${JSON.stringify(manifest, null, 2)}\n`;
 }
-function buildInitialManifest(dataFilePath) {
-    return appendSource(emptyManifest(), {
-        path: dataFilePath,
+function buildInitialManifest(trackName) {
+    return appendWorkflow(emptyManifest(), {
+        track_name: trackName,
+        dir: workflowDir(trackName),
         first_seen: Date.now(),
     });
 }
@@ -36664,6 +36684,77 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+;// CONCATENATED MODULE: ./src/workflow-index.ts
+
+
+// data/{track_name}/index.json
+function workflowIndexPath(trackName) {
+    return `${workflowDir(trackName)}/index.json`;
+}
+function parseWorkflowIndex(text) {
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch (e) {
+        throw new Error(`Existing workflow index is not valid JSON: ${e.message}`);
+    }
+    if (!isWorkflowIndex(parsed)) {
+        throw new Error(`Existing workflow index does not match the expected schema ` +
+            `(schema_version=${WORKFLOW_INDEX_SCHEMA_VERSION}).`);
+    }
+    return parsed;
+}
+function isWorkflowIndex(value) {
+    if (typeof value !== "object" || value === null)
+        return false;
+    const candidate = value;
+    if (candidate.schema_version !== WORKFLOW_INDEX_SCHEMA_VERSION)
+        return false;
+    if (typeof candidate.track_name !== "string")
+        return false;
+    if (!Array.isArray(candidate.runs))
+        return false;
+    if (!candidate.runs.every(isWorkflowIndexRun))
+        return false;
+    if (typeof candidate.last_updated !== "number")
+        return false;
+    return true;
+}
+function isWorkflowIndexRun(value) {
+    if (typeof value !== "object" || value === null)
+        return false;
+    const c = value;
+    return (typeof c.date === "string" &&
+        typeof c.run_id === "number" &&
+        typeof c.run_attempt === "number");
+}
+function serializeWorkflowIndex(index) {
+    return `${JSON.stringify(index, null, 2)}\n`;
+}
+// runs は (run_id, run_attempt) で一意。既に登録済みなら no-op、無ければ追加して
+// run_id 昇順 (同 run_id なら run_attempt 昇順) でソートする。
+function upsertRun(index, run, now) {
+    const exists = index.runs.some((r) => r.run_id === run.run_id && r.run_attempt === run.run_attempt);
+    const runs = exists
+        ? index.runs
+        : [...index.runs, run].sort(compareRuns);
+    return {
+        schema_version: WORKFLOW_INDEX_SCHEMA_VERSION,
+        track_name: index.track_name,
+        runs,
+        last_updated: now,
+    };
+}
+function compareRuns(a, b) {
+    if (a.run_id !== b.run_id)
+        return a.run_id - b.run_id;
+    return a.run_attempt - b.run_attempt;
+}
+function buildInitialWorkflowIndex(trackName, run, now) {
+    return upsertRun(emptyWorkflowIndex(trackName), run, now);
+}
+
 ;// CONCATENATED MODULE: ./src/storage.ts
 
 
@@ -36675,7 +36766,8 @@ const storage_COMMITTER = {
     name: "github-actions[bot]",
     email: "41898282+github-actions[bot]@users.noreply.github.com",
 };
-const storage_MAX_PUSH_ATTEMPTS = 5;
+// 同一 workflow が同タイミングで複数 run される CI でも吸収できるように余裕を持たせる。
+const storage_MAX_PUSH_ATTEMPTS = 10;
 const storage_RETRY_BASE_DELAY_MS = 500;
 // 利用者から見える HTML エントリポイントのパス。gh-pages の root に置く。
 const INDEX_HTML_REMOTE_PATH = "index.html";
@@ -36689,13 +36781,15 @@ async function writeEntryToGhPages(args) {
         // race condition: branch was concurrently created → fall through to update flow
     }
     await appendWithRetry(args);
-    await ensureManifestEntry({
-        octokit: args.octokit,
-        owner: args.owner,
-        repo: args.repo,
-        inputs: args.inputs,
-    });
-    await ensureIndexHtml(args);
+    await Promise.all([
+        ensureManifestEntry({
+            octokit: args.octokit,
+            owner: args.owner,
+            repo: args.repo,
+            inputs: args.inputs,
+        }),
+        ensureIndexHtml(args),
+    ]);
 }
 async function branchExistsOnRemote(args) {
     try {
@@ -36713,20 +36807,28 @@ async function branchExistsOnRemote(args) {
     }
 }
 async function bootstrapBranch(args) {
-    const initial = appendEntry(emptyDataFile(), args.entry, args.inputs.maxItemsInHistory);
-    const indexHtml = await loadBundledIndexHtml();
-    const initialManifest = buildInitialManifest(args.inputs.dataFilePath);
-    const [dataBlob, htmlBlob, manifestBlob] = await Promise.all([
+    const trackName = args.inputs.trackName;
+    const di = dateInfoFromMillis(args.entry.date);
+    const entryPath = perRunFilePath(trackName, di, args.entry.run_id, args.entry.run_attempt);
+    const indexPath = workflowIndexPath(trackName);
+    const now = Date.now();
+    const initialIndex = buildInitialWorkflowIndex(trackName, {
+        date: di.dateStr,
+        run_id: args.entry.run_id,
+        run_attempt: args.entry.run_attempt,
+    }, now);
+    const initialManifest = buildInitialManifest(trackName);
+    const [entryBlob, indexBlob, manifestBlob, htmlBlob] = await Promise.all([
         args.octokit.rest.git.createBlob({
             owner: args.owner,
             repo: args.repo,
-            content: Buffer.from(serializeDataFile(initial), "utf-8").toString("base64"),
+            content: Buffer.from(serializeEntry(args.entry), "utf-8").toString("base64"),
             encoding: "base64",
         }),
         args.octokit.rest.git.createBlob({
             owner: args.owner,
             repo: args.repo,
-            content: indexHtml.toString("base64"),
+            content: Buffer.from(serializeWorkflowIndex(initialIndex), "utf-8").toString("base64"),
             encoding: "base64",
         }),
         args.octokit.rest.git.createBlob({
@@ -36735,37 +36837,29 @@ async function bootstrapBranch(args) {
             content: Buffer.from(serializeManifest(initialManifest), "utf-8").toString("base64"),
             encoding: "base64",
         }),
+        loadBundledIndexHtml().then((html) => args.octokit.rest.git.createBlob({
+            owner: args.owner,
+            repo: args.repo,
+            content: html.toString("base64"),
+            encoding: "base64",
+        })),
     ]);
     const tree = await args.octokit.rest.git.createTree({
         owner: args.owner,
         repo: args.repo,
         tree: [
-            {
-                path: args.inputs.dataFilePath,
-                mode: "100644",
-                type: "blob",
-                sha: dataBlob.data.sha,
-            },
-            {
-                path: INDEX_HTML_REMOTE_PATH,
-                mode: "100644",
-                type: "blob",
-                sha: htmlBlob.data.sha,
-            },
-            {
-                path: MANIFEST_FILE_PATH,
-                mode: "100644",
-                type: "blob",
-                sha: manifestBlob.data.sha,
-            },
+            { path: entryPath, mode: "100644", type: "blob", sha: entryBlob.data.sha },
+            { path: indexPath, mode: "100644", type: "blob", sha: indexBlob.data.sha },
+            { path: MANIFEST_FILE_PATH, mode: "100644", type: "blob", sha: manifestBlob.data.sha },
+            { path: INDEX_HTML_REMOTE_PATH, mode: "100644", type: "blob", sha: htmlBlob.data.sha },
         ],
     });
     const commit = await args.octokit.rest.git.createCommit({
         owner: args.owner,
         repo: args.repo,
-        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry, index.html, and manifest`,
+        message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} for ${trackName} ${args.entry.run_id}-${args.entry.run_attempt}`,
         tree: tree.data.sha,
-        parents: [], // orphan commit — gh-pages を main 履歴と分離する
+        parents: [],
         author: storage_COMMITTER,
         committer: storage_COMMITTER,
     });
@@ -36854,145 +36948,136 @@ function computeGitBlobSha(content) {
     return external_node_crypto_.createHash("sha1").update(header).update(content).digest("hex");
 }
 async function appendWithRetry(args) {
-    let lastError;
     for (let attempt = 1; attempt <= storage_MAX_PUSH_ATTEMPTS; attempt++) {
-        try {
-            await appendOnce(args);
+        const ok = await appendOnce(args);
+        if (ok)
             return;
+        if (attempt >= storage_MAX_PUSH_ATTEMPTS) {
+            throw new Error(`Failed to push after ${storage_MAX_PUSH_ATTEMPTS} ref-conflict retries.`);
         }
-        catch (err) {
-            lastError = err;
-            const status = storage_errorStatus(err);
-            const retryable = status === 409 || status === 422;
-            if (!retryable || attempt >= storage_MAX_PUSH_ATTEMPTS) {
-                throw err;
-            }
-            const delay = storage_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-            warning(`Conflict (status=${status}) on attempt ${attempt}/${storage_MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`);
-            await storage_sleep(delay);
-        }
+        const base = storage_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+        const jitter = Math.floor(Math.random() * storage_RETRY_BASE_DELAY_MS);
+        const delay = base + jitter;
+        warning(`Ref conflict on attempt ${attempt}/${storage_MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`);
+        await storage_sleep(delay);
     }
-    throw lastError;
 }
+// 戻り値 false は updateRef が 422 を返した = 親 commit が古い (他 run が先に push)
+// のため retry すべき状態を表す。createBlob 等の 422 (バリデーションエラー) はここで
+// 区別したいので updateRef の呼び出し点でだけ 422 を拾う。
 async function appendOnce(args) {
-    const existing = await readDataFile(args);
-    const next = appendEntry(existing.data, args.entry, args.inputs.maxItemsInHistory);
-    // Git Data API ベースで read-modify-write する。Contents API は >1MB のファイルで
-    // content を返さなくなるため、履歴を積み上げる用途では Blob/Tree/Commit を直接扱う。
-    const blob = await args.octokit.rest.git.createBlob({
-        owner: args.owner,
-        repo: args.repo,
-        content: Buffer.from(serializeDataFile(next), "utf-8").toString("base64"),
-        encoding: "base64",
-    });
+    const trackName = args.inputs.trackName;
+    const di = dateInfoFromMillis(args.entry.date);
+    const entryPath = perRunFilePath(trackName, di, args.entry.run_id, args.entry.run_attempt);
+    const indexPath = workflowIndexPath(trackName);
+    const branchRef = `heads/${args.inputs.ghPagesBranch}`;
+    const [{ parentSha, baseTreeSha }, currentIndex] = await Promise.all([
+        args.octokit.rest.git
+            .getRef({ owner: args.owner, repo: args.repo, ref: branchRef })
+            .then((ref) => args.octokit.rest.git
+            .getCommit({
+            owner: args.owner,
+            repo: args.repo,
+            commit_sha: ref.data.object.sha,
+        })
+            .then((commit) => ({
+            parentSha: ref.data.object.sha,
+            baseTreeSha: commit.data.tree.sha,
+        }))),
+        readWorkflowIndexAt(args, args.inputs.ghPagesBranch, indexPath),
+    ]);
+    const now = Date.now();
+    const run = {
+        date: di.dateStr,
+        run_id: args.entry.run_id,
+        run_attempt: args.entry.run_attempt,
+    };
+    const nextIndex = currentIndex
+        ? upsertRun(currentIndex, run, now)
+        : buildInitialWorkflowIndex(trackName, run, now);
+    const [entryBlob, indexBlob] = await Promise.all([
+        args.octokit.rest.git.createBlob({
+            owner: args.owner,
+            repo: args.repo,
+            content: Buffer.from(serializeEntry(args.entry), "utf-8").toString("base64"),
+            encoding: "base64",
+        }),
+        args.octokit.rest.git.createBlob({
+            owner: args.owner,
+            repo: args.repo,
+            content: Buffer.from(serializeWorkflowIndex(nextIndex), "utf-8").toString("base64"),
+            encoding: "base64",
+        }),
+    ]);
     const tree = await args.octokit.rest.git.createTree({
         owner: args.owner,
         repo: args.repo,
-        base_tree: existing.baseTreeSha,
+        base_tree: baseTreeSha,
         tree: [
-            {
-                path: args.inputs.dataFilePath,
-                mode: "100644",
-                type: "blob",
-                sha: blob.data.sha,
-            },
+            { path: entryPath, mode: "100644", type: "blob", sha: entryBlob.data.sha },
+            { path: indexPath, mode: "100644", type: "blob", sha: indexBlob.data.sha },
         ],
     });
     const commit = await args.octokit.rest.git.createCommit({
         owner: args.owner,
         repo: args.repo,
-        message: buildCommitMessage(args.entry),
+        message: `chore(ghtrack): record ${trackName} ${args.entry.run_id}-${args.entry.run_attempt}`,
         tree: tree.data.sha,
-        parents: [existing.headSha],
+        parents: [parentSha],
         author: storage_COMMITTER,
         committer: storage_COMMITTER,
     });
-    // force:false で他 runner の同時 push と競合した場合は 422 が返る。
-    // appendWithRetry がそれを retry する。
-    await args.octokit.rest.git.updateRef({
-        owner: args.owner,
-        repo: args.repo,
-        ref: `heads/${args.inputs.ghPagesBranch}`,
-        sha: commit.data.sha,
-        force: false,
-    });
-    info(`Appended entry (run_id=${args.entry.run_id}) to ${args.inputs.dataFilePath} on ${args.inputs.ghPagesBranch}. ` +
-        `Total entries: ${next.entries.length}.`);
-}
-async function readDataFile(args) {
-    const ref = await args.octokit.rest.git.getRef({
-        owner: args.owner,
-        repo: args.repo,
-        ref: `heads/${args.inputs.ghPagesBranch}`,
-    });
-    const headSha = ref.data.object.sha;
-    const commit = await args.octokit.rest.git.getCommit({
-        owner: args.owner,
-        repo: args.repo,
-        commit_sha: headSha,
-    });
-    const baseTreeSha = commit.data.tree.sha;
-    // recursive=true を渡すとサブツリーまで展開される。data ファイルは
-    // ネストされたパス(e.g. data/e2e-admin.json)に置かれるためこれが必要。
-    const tree = await args.octokit.rest.git.getTree({
-        owner: args.owner,
-        repo: args.repo,
-        tree_sha: baseTreeSha,
-        recursive: "true",
-    });
-    if (tree.data.truncated) {
-        // gh-pages の管理対象は ghtrack が生成する数十ファイル程度を想定しており、
-        // GitHub 側の上限(>100k entries)に達することは実質起きないが、念のため明示エラー化する。
-        throw new Error(`Tree at ${args.inputs.ghPagesBranch} is too large to enumerate recursively. ` +
-            `Please reduce the number of files on the branch.`);
-    }
-    const node = tree.data.tree.find((n) => n.path === args.inputs.dataFilePath && n.type === "blob");
-    if (!node?.sha) {
-        // ブランチは存在するが data ファイルがまだ無いケース。空から始める。
-        return { data: emptyDataFile(), fileSha: null, headSha, baseTreeSha };
-    }
-    const blob = await args.octokit.rest.git.getBlob({
-        owner: args.owner,
-        repo: args.repo,
-        file_sha: node.sha,
-    });
-    // getBlob は encoding を返す。通常 base64 だが念のため動的に処理する。
-    const encoding = blob.data.encoding === "utf-8" ? "utf-8" : "base64";
-    const text = Buffer.from(blob.data.content, encoding).toString("utf-8");
-    return { data: parseDataFile(text), fileSha: node.sha, headSha, baseTreeSha };
-}
-function parseDataFile(text) {
-    let parsed;
     try {
-        parsed = JSON.parse(text);
+        await args.octokit.rest.git.updateRef({
+            owner: args.owner,
+            repo: args.repo,
+            ref: branchRef,
+            sha: commit.data.sha,
+        });
     }
-    catch (e) {
-        throw new Error(`Existing data file is not valid JSON: ${e.message}`);
+    catch (err) {
+        if (storage_errorStatus(err) === 422)
+            return false;
+        throw err;
     }
-    if (!isDataFile(parsed)) {
-        throw new Error(`Existing data file does not match the expected schema (schema_version=${SCHEMA_VERSION}).`);
+    info(`Recorded ${trackName} run ${args.entry.run_id}-${args.entry.run_attempt} (${di.dateStr}).`);
+    return true;
+}
+async function readWorkflowIndexAt(args, ref, indexPath) {
+    try {
+        const res = await args.octokit.rest.repos.getContent({
+            owner: args.owner,
+            repo: args.repo,
+            path: indexPath,
+            ref,
+        });
+        if (Array.isArray(res.data) || res.data.type !== "file") {
+            throw new Error(`${indexPath} is not a regular file.`);
+        }
+        if (typeof res.data.content !== "string" || res.data.content.length === 0) {
+            throw new Error(`${indexPath} content is empty or unreadable.`);
+        }
+        const text = Buffer.from(res.data.content, "base64").toString("utf-8");
+        return parseWorkflowIndex(text);
     }
-    return parsed;
+    catch (err) {
+        if (storage_errorStatus(err) === 404)
+            return null;
+        throw err;
+    }
 }
-function isDataFile(value) {
-    if (typeof value !== "object" || value === null)
-        return false;
-    const candidate = value;
-    return (candidate.schema_version === SCHEMA_VERSION &&
-        Array.isArray(candidate.entries));
+function dateInfoFromMillis(millis) {
+    const d = new Date(millis);
+    const yyyy = String(d.getUTCFullYear()).padStart(4, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return { yyyy, mm, dd, dateStr: `${yyyy}/${mm}/${dd}` };
 }
-function appendEntry(data, entry, maxItems) {
-    const entries = [...data.entries, entry];
-    const truncated = maxItems !== null && entries.length > maxItems
-        ? entries.slice(entries.length - maxItems)
-        : entries;
-    return { schema_version: SCHEMA_VERSION, entries: truncated };
+function perRunFilePath(trackName, di, runId, runAttempt) {
+    return `${workflowDir(trackName)}/${di.yyyy}/${di.mm}/${di.dd}/${runId}-${runAttempt}.json`;
 }
-function serializeDataFile(data) {
-    return `${JSON.stringify(data, null, 2)}\n`;
-}
-function buildCommitMessage(entry) {
-    return `chore(ghtrack): append run ${entry.run_id} for ${entry.workflow}`;
+function serializeEntry(entry) {
+    return `${JSON.stringify(entry, null, 2)}\n`;
 }
 function storage_errorStatus(err) {
     if (err && typeof err === "object" && "status" in err) {
@@ -37035,21 +37120,20 @@ async function run() {
     }
 }
 function resolveInputs() {
-    const maxItemsRaw = getInput("max-items-in-history");
-    const maxItemsInHistory = maxItemsRaw === "" ? null : parsePositiveInt(maxItemsRaw, "max-items-in-history");
+    const raw = getInput("track-name").trim();
+    let trackName;
+    if (raw === "") {
+        trackName = defaultTrackName();
+    }
+    else {
+        validateTrackName(raw);
+        trackName = raw;
+    }
     return {
         token: getInput("github-token", { required: true }),
         ghPagesBranch: getInput("gh-pages-branch") || "gh-pages",
-        dataFilePath: getInput("data-file-path") || defaultDataFilePath(),
-        maxItemsInHistory,
+        trackName,
     };
-}
-function parsePositiveInt(raw, name) {
-    const n = Number.parseInt(raw, 10);
-    if (!Number.isFinite(n) || n <= 0) {
-        throw new Error(`Invalid value for ${name}: "${raw}" — must be a positive integer.`);
-    }
-    return n;
 }
 function isForkPullRequest(context) {
     if (context.eventName !== "pull_request" &&

@@ -3,14 +3,21 @@ import * as github from "@actions/github";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { DataFile, Entry, Inputs } from "./types";
-import { SCHEMA_VERSION, emptyDataFile } from "./types";
+import type { Entry, Inputs, WorkflowIndex } from "./types";
 import {
   MANIFEST_FILE_PATH,
   buildInitialManifest,
   ensureManifestEntry,
   serializeManifest,
+  workflowDir,
 } from "./manifest";
+import {
+  buildInitialWorkflowIndex,
+  parseWorkflowIndex,
+  serializeWorkflowIndex,
+  upsertRun,
+  workflowIndexPath,
+} from "./workflow-index";
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -19,7 +26,8 @@ const COMMITTER = {
   email: "41898282+github-actions[bot]@users.noreply.github.com",
 } as const;
 
-const MAX_PUSH_ATTEMPTS = 5;
+// 同一 workflow が同タイミングで複数 run される CI でも吸収できるように余裕を持たせる。
+const MAX_PUSH_ATTEMPTS = 10;
 const RETRY_BASE_DELAY_MS = 500;
 
 // 利用者から見える HTML エントリポイントのパス。gh-pages の root に置く。
@@ -44,13 +52,15 @@ export async function writeEntryToGhPages(args: WriteEntryArgs): Promise<void> {
   }
 
   await appendWithRetry(args);
-  await ensureManifestEntry({
-    octokit: args.octokit,
-    owner: args.owner,
-    repo: args.repo,
-    inputs: args.inputs,
-  });
-  await ensureIndexHtml(args);
+  await Promise.all([
+    ensureManifestEntry({
+      octokit: args.octokit,
+      owner: args.owner,
+      repo: args.repo,
+      inputs: args.inputs,
+    }),
+    ensureIndexHtml(args),
+  ]);
 }
 
 async function branchExistsOnRemote(args: WriteEntryArgs): Promise<boolean> {
@@ -68,21 +78,34 @@ async function branchExistsOnRemote(args: WriteEntryArgs): Promise<boolean> {
 }
 
 async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
-  const initial = appendEntry(emptyDataFile(), args.entry, args.inputs.maxItemsInHistory);
-  const indexHtml = await loadBundledIndexHtml();
-  const initialManifest = buildInitialManifest(args.inputs.dataFilePath);
+  const trackName = args.inputs.trackName;
+  const di = dateInfoFromMillis(args.entry.date);
+  const entryPath = perRunFilePath(trackName, di, args.entry.run_id, args.entry.run_attempt);
+  const indexPath = workflowIndexPath(trackName);
 
-  const [dataBlob, htmlBlob, manifestBlob] = await Promise.all([
+  const now = Date.now();
+  const initialIndex = buildInitialWorkflowIndex(
+    trackName,
+    {
+      date: di.dateStr,
+      run_id: args.entry.run_id,
+      run_attempt: args.entry.run_attempt,
+    },
+    now,
+  );
+  const initialManifest = buildInitialManifest(trackName);
+
+  const [entryBlob, indexBlob, manifestBlob, htmlBlob] = await Promise.all([
     args.octokit.rest.git.createBlob({
       owner: args.owner,
       repo: args.repo,
-      content: Buffer.from(serializeDataFile(initial), "utf-8").toString("base64"),
+      content: Buffer.from(serializeEntry(args.entry), "utf-8").toString("base64"),
       encoding: "base64",
     }),
     args.octokit.rest.git.createBlob({
       owner: args.owner,
       repo: args.repo,
-      content: indexHtml.toString("base64"),
+      content: Buffer.from(serializeWorkflowIndex(initialIndex), "utf-8").toString("base64"),
       encoding: "base64",
     }),
     args.octokit.rest.git.createBlob({
@@ -91,39 +114,33 @@ async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
       content: Buffer.from(serializeManifest(initialManifest), "utf-8").toString("base64"),
       encoding: "base64",
     }),
+    loadBundledIndexHtml().then((html) =>
+      args.octokit.rest.git.createBlob({
+        owner: args.owner,
+        repo: args.repo,
+        content: html.toString("base64"),
+        encoding: "base64",
+      }),
+    ),
   ]);
 
   const tree = await args.octokit.rest.git.createTree({
     owner: args.owner,
     repo: args.repo,
     tree: [
-      {
-        path: args.inputs.dataFilePath,
-        mode: "100644",
-        type: "blob",
-        sha: dataBlob.data.sha,
-      },
-      {
-        path: INDEX_HTML_REMOTE_PATH,
-        mode: "100644",
-        type: "blob",
-        sha: htmlBlob.data.sha,
-      },
-      {
-        path: MANIFEST_FILE_PATH,
-        mode: "100644",
-        type: "blob",
-        sha: manifestBlob.data.sha,
-      },
+      { path: entryPath, mode: "100644", type: "blob", sha: entryBlob.data.sha },
+      { path: indexPath, mode: "100644", type: "blob", sha: indexBlob.data.sha },
+      { path: MANIFEST_FILE_PATH, mode: "100644", type: "blob", sha: manifestBlob.data.sha },
+      { path: INDEX_HTML_REMOTE_PATH, mode: "100644", type: "blob", sha: htmlBlob.data.sha },
     ],
   });
 
   const commit = await args.octokit.rest.git.createCommit({
     owner: args.owner,
     repo: args.repo,
-    message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} with first entry, index.html, and manifest`,
+    message: `chore(ghtrack): bootstrap ${args.inputs.ghPagesBranch} for ${trackName} ${args.entry.run_id}-${args.entry.run_attempt}`,
     tree: tree.data.sha,
-    parents: [], // orphan commit — gh-pages を main 履歴と分離する
+    parents: [],
     author: COMMITTER,
     committer: COMMITTER,
   });
@@ -171,7 +188,9 @@ async function ensureIndexHtml(args: WriteEntryArgs): Promise<void> {
   }
 
   if (remoteSha === localBlobSha) {
-    core.info(`index.html is up to date on ${args.inputs.ghPagesBranch} (sha=${localBlobSha.slice(0, 7)}).`);
+    core.info(
+      `index.html is up to date on ${args.inputs.ghPagesBranch} (sha=${localBlobSha.slice(0, 7)}).`,
+    );
     return;
   }
 
@@ -180,9 +199,10 @@ async function ensureIndexHtml(args: WriteEntryArgs): Promise<void> {
     repo: args.repo,
     path: INDEX_HTML_REMOTE_PATH,
     branch: args.inputs.ghPagesBranch,
-    message: remoteSha === null
-      ? `chore(ghtrack): add index.html to ${args.inputs.ghPagesBranch}`
-      : `chore(ghtrack): sync index.html on ${args.inputs.ghPagesBranch}`,
+    message:
+      remoteSha === null
+        ? `chore(ghtrack): add index.html to ${args.inputs.ghPagesBranch}`
+        : `chore(ghtrack): sync index.html on ${args.inputs.ghPagesBranch}`,
     content: html.toString("base64"),
     sha: remoteSha ?? undefined,
     author: COMMITTER,
@@ -211,9 +231,7 @@ async function loadBundledIndexHtml(): Promise<Buffer> {
       if ((err as { code?: string }).code !== "ENOENT") throw err;
     }
   }
-  throw new Error(
-    `assets/index.html not found. Tried: ${candidates.join(", ")}`,
-  );
+  throw new Error(`assets/index.html not found. Tried: ${candidates.join(", ")}`);
 }
 
 function computeGitBlobSha(content: Buffer): string {
@@ -224,187 +242,167 @@ function computeGitBlobSha(content: Buffer): string {
 }
 
 async function appendWithRetry(args: WriteEntryArgs): Promise<void> {
-  let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
-    try {
-      await appendOnce(args);
-      return;
-    } catch (err) {
-      lastError = err;
-      const status = errorStatus(err);
-      const retryable = status === 409 || status === 422;
-      if (!retryable || attempt >= MAX_PUSH_ATTEMPTS) {
-        throw err;
-      }
-      const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-      core.warning(
-        `Conflict (status=${status}) on attempt ${attempt}/${MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`,
+    const ok = await appendOnce(args);
+    if (ok) return;
+    if (attempt >= MAX_PUSH_ATTEMPTS) {
+      throw new Error(
+        `Failed to push after ${MAX_PUSH_ATTEMPTS} ref-conflict retries.`,
       );
-      await sleep(delay);
     }
+    const base = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+    const jitter = Math.floor(Math.random() * RETRY_BASE_DELAY_MS);
+    const delay = base + jitter;
+    core.warning(
+      `Ref conflict on attempt ${attempt}/${MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`,
+    );
+    await sleep(delay);
   }
-  throw lastError;
 }
 
-async function appendOnce(args: WriteEntryArgs): Promise<void> {
-  const existing = await readDataFile(args);
-  const next = appendEntry(existing.data, args.entry, args.inputs.maxItemsInHistory);
+// 戻り値 false は updateRef が 422 を返した = 親 commit が古い (他 run が先に push)
+// のため retry すべき状態を表す。createBlob 等の 422 (バリデーションエラー) はここで
+// 区別したいので updateRef の呼び出し点でだけ 422 を拾う。
+async function appendOnce(args: WriteEntryArgs): Promise<boolean> {
+  const trackName = args.inputs.trackName;
+  const di = dateInfoFromMillis(args.entry.date);
+  const entryPath = perRunFilePath(trackName, di, args.entry.run_id, args.entry.run_attempt);
+  const indexPath = workflowIndexPath(trackName);
+  const branchRef = `heads/${args.inputs.ghPagesBranch}`;
 
-  // Git Data API ベースで read-modify-write する。Contents API は >1MB のファイルで
-  // content を返さなくなるため、履歴を積み上げる用途では Blob/Tree/Commit を直接扱う。
-  const blob = await args.octokit.rest.git.createBlob({
-    owner: args.owner,
-    repo: args.repo,
-    content: Buffer.from(serializeDataFile(next), "utf-8").toString("base64"),
-    encoding: "base64",
-  });
+  const [{ parentSha, baseTreeSha }, currentIndex] = await Promise.all([
+    args.octokit.rest.git
+      .getRef({ owner: args.owner, repo: args.repo, ref: branchRef })
+      .then((ref) =>
+        args.octokit.rest.git
+          .getCommit({
+            owner: args.owner,
+            repo: args.repo,
+            commit_sha: ref.data.object.sha,
+          })
+          .then((commit) => ({
+            parentSha: ref.data.object.sha,
+            baseTreeSha: commit.data.tree.sha,
+          })),
+      ),
+    readWorkflowIndexAt(args, args.inputs.ghPagesBranch, indexPath),
+  ]);
+
+  const now = Date.now();
+  const run = {
+    date: di.dateStr,
+    run_id: args.entry.run_id,
+    run_attempt: args.entry.run_attempt,
+  };
+  const nextIndex = currentIndex
+    ? upsertRun(currentIndex, run, now)
+    : buildInitialWorkflowIndex(trackName, run, now);
+
+  const [entryBlob, indexBlob] = await Promise.all([
+    args.octokit.rest.git.createBlob({
+      owner: args.owner,
+      repo: args.repo,
+      content: Buffer.from(serializeEntry(args.entry), "utf-8").toString("base64"),
+      encoding: "base64",
+    }),
+    args.octokit.rest.git.createBlob({
+      owner: args.owner,
+      repo: args.repo,
+      content: Buffer.from(serializeWorkflowIndex(nextIndex), "utf-8").toString("base64"),
+      encoding: "base64",
+    }),
+  ]);
 
   const tree = await args.octokit.rest.git.createTree({
     owner: args.owner,
     repo: args.repo,
-    base_tree: existing.baseTreeSha,
+    base_tree: baseTreeSha,
     tree: [
-      {
-        path: args.inputs.dataFilePath,
-        mode: "100644",
-        type: "blob",
-        sha: blob.data.sha,
-      },
+      { path: entryPath, mode: "100644", type: "blob", sha: entryBlob.data.sha },
+      { path: indexPath, mode: "100644", type: "blob", sha: indexBlob.data.sha },
     ],
   });
 
   const commit = await args.octokit.rest.git.createCommit({
     owner: args.owner,
     repo: args.repo,
-    message: buildCommitMessage(args.entry),
+    message: `chore(ghtrack): record ${trackName} ${args.entry.run_id}-${args.entry.run_attempt}`,
     tree: tree.data.sha,
-    parents: [existing.headSha],
+    parents: [parentSha],
     author: COMMITTER,
     committer: COMMITTER,
   });
 
-  // force:false で他 runner の同時 push と競合した場合は 422 が返る。
-  // appendWithRetry がそれを retry する。
-  await args.octokit.rest.git.updateRef({
-    owner: args.owner,
-    repo: args.repo,
-    ref: `heads/${args.inputs.ghPagesBranch}`,
-    sha: commit.data.sha,
-    force: false,
-  });
+  try {
+    await args.octokit.rest.git.updateRef({
+      owner: args.owner,
+      repo: args.repo,
+      ref: branchRef,
+      sha: commit.data.sha,
+    });
+  } catch (err) {
+    if (errorStatus(err) === 422) return false;
+    throw err;
+  }
 
   core.info(
-    `Appended entry (run_id=${args.entry.run_id}) to ${args.inputs.dataFilePath} on ${args.inputs.ghPagesBranch}. ` +
-      `Total entries: ${next.entries.length}.`,
+    `Recorded ${trackName} run ${args.entry.run_id}-${args.entry.run_attempt} (${di.dateStr}).`,
   );
+  return true;
 }
 
-interface ReadResult {
-  data: DataFile;
-  // 既存ファイルの blob sha。新規作成時は null。
-  fileSha: string | null;
-  // ブランチ HEAD のコミット sha。createCommit の parent に渡す。
-  headSha: string;
-  // HEAD コミットの tree sha。createTree の base_tree に渡して差分更新する。
-  baseTreeSha: string;
-}
-
-async function readDataFile(args: WriteEntryArgs): Promise<ReadResult> {
-  const ref = await args.octokit.rest.git.getRef({
-    owner: args.owner,
-    repo: args.repo,
-    ref: `heads/${args.inputs.ghPagesBranch}`,
-  });
-  const headSha = ref.data.object.sha;
-
-  const commit = await args.octokit.rest.git.getCommit({
-    owner: args.owner,
-    repo: args.repo,
-    commit_sha: headSha,
-  });
-  const baseTreeSha = commit.data.tree.sha;
-
-  // recursive=true を渡すとサブツリーまで展開される。data ファイルは
-  // ネストされたパス(e.g. data/e2e-admin.json)に置かれるためこれが必要。
-  const tree = await args.octokit.rest.git.getTree({
-    owner: args.owner,
-    repo: args.repo,
-    tree_sha: baseTreeSha,
-    recursive: "true",
-  });
-  if (tree.data.truncated) {
-    // gh-pages の管理対象は ghtrack が生成する数十ファイル程度を想定しており、
-    // GitHub 側の上限(>100k entries)に達することは実質起きないが、念のため明示エラー化する。
-    throw new Error(
-      `Tree at ${args.inputs.ghPagesBranch} is too large to enumerate recursively. ` +
-        `Please reduce the number of files on the branch.`,
-    );
-  }
-
-  const node = tree.data.tree.find(
-    (n) => n.path === args.inputs.dataFilePath && n.type === "blob",
-  );
-  if (!node?.sha) {
-    // ブランチは存在するが data ファイルがまだ無いケース。空から始める。
-    return { data: emptyDataFile(), fileSha: null, headSha, baseTreeSha };
-  }
-
-  const blob = await args.octokit.rest.git.getBlob({
-    owner: args.owner,
-    repo: args.repo,
-    file_sha: node.sha,
-  });
-  // getBlob は encoding を返す。通常 base64 だが念のため動的に処理する。
-  const encoding = blob.data.encoding === "utf-8" ? "utf-8" : "base64";
-  const text = Buffer.from(blob.data.content, encoding).toString("utf-8");
-  return { data: parseDataFile(text), fileSha: node.sha, headSha, baseTreeSha };
-}
-
-function parseDataFile(text: string): DataFile {
-  let parsed: unknown;
+async function readWorkflowIndexAt(
+  args: WriteEntryArgs,
+  ref: string,
+  indexPath: string,
+): Promise<WorkflowIndex | null> {
   try {
-    parsed = JSON.parse(text);
-  } catch (e) {
-    throw new Error(
-      `Existing data file is not valid JSON: ${(e as Error).message}`,
-    );
+    const res = await args.octokit.rest.repos.getContent({
+      owner: args.owner,
+      repo: args.repo,
+      path: indexPath,
+      ref,
+    });
+    if (Array.isArray(res.data) || res.data.type !== "file") {
+      throw new Error(`${indexPath} is not a regular file.`);
+    }
+    if (typeof res.data.content !== "string" || res.data.content.length === 0) {
+      throw new Error(`${indexPath} content is empty or unreadable.`);
+    }
+    const text = Buffer.from(res.data.content, "base64").toString("utf-8");
+    return parseWorkflowIndex(text);
+  } catch (err) {
+    if (errorStatus(err) === 404) return null;
+    throw err;
   }
-  if (!isDataFile(parsed)) {
-    throw new Error(
-      `Existing data file does not match the expected schema (schema_version=${SCHEMA_VERSION}).`,
-    );
-  }
-  return parsed;
 }
 
-function isDataFile(value: unknown): value is DataFile {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as { schema_version?: unknown; entries?: unknown };
-  return (
-    candidate.schema_version === SCHEMA_VERSION &&
-    Array.isArray(candidate.entries)
-  );
+interface DateInfo {
+  yyyy: string;
+  mm: string;
+  dd: string;
+  dateStr: string;
 }
 
-function appendEntry(
-  data: DataFile,
-  entry: Entry,
-  maxItems: number | null,
-): DataFile {
-  const entries = [...data.entries, entry];
-  const truncated =
-    maxItems !== null && entries.length > maxItems
-      ? entries.slice(entries.length - maxItems)
-      : entries;
-  return { schema_version: SCHEMA_VERSION, entries: truncated };
+function dateInfoFromMillis(millis: number): DateInfo {
+  const d = new Date(millis);
+  const yyyy = String(d.getUTCFullYear()).padStart(4, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return { yyyy, mm, dd, dateStr: `${yyyy}/${mm}/${dd}` };
 }
 
-function serializeDataFile(data: DataFile): string {
-  return `${JSON.stringify(data, null, 2)}\n`;
+function perRunFilePath(
+  trackName: string,
+  di: DateInfo,
+  runId: number,
+  runAttempt: number,
+): string {
+  return `${workflowDir(trackName)}/${di.yyyy}/${di.mm}/${di.dd}/${runId}-${runAttempt}.json`;
 }
 
-function buildCommitMessage(entry: Entry): string {
-  return `chore(ghtrack): append run ${entry.run_id} for ${entry.workflow}`;
+function serializeEntry(entry: Entry): string {
+  return `${JSON.stringify(entry, null, 2)}\n`;
 }
 
 function errorStatus(err: unknown): number | null {
