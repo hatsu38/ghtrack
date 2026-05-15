@@ -52,13 +52,15 @@ export async function writeEntryToGhPages(args: WriteEntryArgs): Promise<void> {
   }
 
   await appendWithRetry(args);
-  await ensureManifestEntry({
-    octokit: args.octokit,
-    owner: args.owner,
-    repo: args.repo,
-    inputs: args.inputs,
-  });
-  await ensureIndexHtml(args);
+  await Promise.all([
+    ensureManifestEntry({
+      octokit: args.octokit,
+      owner: args.owner,
+      repo: args.repo,
+      inputs: args.inputs,
+    }),
+    ensureIndexHtml(args),
+  ]);
 }
 
 async function branchExistsOnRemote(args: WriteEntryArgs): Promise<boolean> {
@@ -92,7 +94,6 @@ async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
     now,
   );
   const initialManifest = buildInitialManifest(trackName);
-  const indexHtml = await loadBundledIndexHtml();
 
   const [entryBlob, indexBlob, manifestBlob, htmlBlob] = await Promise.all([
     args.octokit.rest.git.createBlob({
@@ -113,12 +114,14 @@ async function bootstrapBranch(args: WriteEntryArgs): Promise<boolean> {
       content: Buffer.from(serializeManifest(initialManifest), "utf-8").toString("base64"),
       encoding: "base64",
     }),
-    args.octokit.rest.git.createBlob({
-      owner: args.owner,
-      repo: args.repo,
-      content: indexHtml.toString("base64"),
-      encoding: "base64",
-    }),
+    loadBundledIndexHtml().then((html) =>
+      args.octokit.rest.git.createBlob({
+        owner: args.owner,
+        repo: args.repo,
+        content: html.toString("base64"),
+        encoding: "base64",
+      }),
+    ),
   ]);
 
   const tree = await args.octokit.rest.git.createTree({
@@ -238,60 +241,53 @@ function computeGitBlobSha(content: Buffer): string {
   return crypto.createHash("sha1").update(header).update(content).digest("hex");
 }
 
-// updateRef が 422 を返した = 親 commit が古い (= 他 run が先に push した) ことを意味する。
-// この場合だけ retry の対象とし、createBlob 等の 422 (バリデーションエラー)とは区別する。
-class RefConflictError extends Error {
-  constructor() {
-    super("Ref update conflicted; another commit landed on the branch.");
-    this.name = "RefConflictError";
-  }
-}
-
 async function appendWithRetry(args: WriteEntryArgs): Promise<void> {
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
-    try {
-      await appendOnce(args);
-      return;
-    } catch (err) {
-      if (!(err instanceof RefConflictError) || attempt >= MAX_PUSH_ATTEMPTS) {
-        throw err;
-      }
-      const base = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-      const jitter = Math.floor(Math.random() * RETRY_BASE_DELAY_MS);
-      const delay = base + jitter;
-      core.warning(
-        `Ref conflict on attempt ${attempt}/${MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`,
+    const ok = await appendOnce(args);
+    if (ok) return;
+    if (attempt >= MAX_PUSH_ATTEMPTS) {
+      throw new Error(
+        `Failed to push after ${MAX_PUSH_ATTEMPTS} ref-conflict retries.`,
       );
-      await sleep(delay);
     }
+    const base = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+    const jitter = Math.floor(Math.random() * RETRY_BASE_DELAY_MS);
+    const delay = base + jitter;
+    core.warning(
+      `Ref conflict on attempt ${attempt}/${MAX_PUSH_ATTEMPTS}. Retrying in ${delay}ms.`,
+    );
+    await sleep(delay);
   }
 }
 
-async function appendOnce(args: WriteEntryArgs): Promise<void> {
+// 戻り値 false は updateRef が 422 を返した = 親 commit が古い (他 run が先に push)
+// のため retry すべき状態を表す。createBlob 等の 422 (バリデーションエラー) はここで
+// 区別したいので updateRef の呼び出し点でだけ 422 を拾う。
+async function appendOnce(args: WriteEntryArgs): Promise<boolean> {
   const trackName = args.inputs.trackName;
   const di = dateInfoFromMillis(args.entry.date);
   const entryPath = perRunFilePath(trackName, di, args.entry.run_id, args.entry.run_attempt);
   const indexPath = workflowIndexPath(trackName);
+  const branchRef = `heads/${args.inputs.ghPagesBranch}`;
 
-  // 現在の HEAD を確定して base_tree / parent commit に使う。読み取り後に他 run が
-  // commit を進めた場合は最後の updateRef で 422 になり、retry する。
-  const ref = await args.octokit.rest.git.getRef({
-    owner: args.owner,
-    repo: args.repo,
-    ref: `heads/${args.inputs.ghPagesBranch}`,
-  });
-  const parentSha = ref.data.object.sha;
+  const [{ parentSha, baseTreeSha }, currentIndex] = await Promise.all([
+    args.octokit.rest.git
+      .getRef({ owner: args.owner, repo: args.repo, ref: branchRef })
+      .then((ref) =>
+        args.octokit.rest.git
+          .getCommit({
+            owner: args.owner,
+            repo: args.repo,
+            commit_sha: ref.data.object.sha,
+          })
+          .then((commit) => ({
+            parentSha: ref.data.object.sha,
+            baseTreeSha: commit.data.tree.sha,
+          })),
+      ),
+    readWorkflowIndexAt(args, args.inputs.ghPagesBranch, indexPath),
+  ]);
 
-  const parentCommit = await args.octokit.rest.git.getCommit({
-    owner: args.owner,
-    repo: args.repo,
-    commit_sha: parentSha,
-  });
-  const baseTreeSha = parentCommit.data.tree.sha;
-
-  // この track の workflow index を読む。track が新規 (existing branch だが index は無い)
-  // 場合は null になる。
-  const currentIndex = await readWorkflowIndexAt(args, parentSha, indexPath);
   const now = Date.now();
   const run = {
     date: di.dateStr,
@@ -341,19 +337,18 @@ async function appendOnce(args: WriteEntryArgs): Promise<void> {
     await args.octokit.rest.git.updateRef({
       owner: args.owner,
       repo: args.repo,
-      ref: `heads/${args.inputs.ghPagesBranch}`,
+      ref: branchRef,
       sha: commit.data.sha,
     });
   } catch (err) {
-    if (errorStatus(err) === 422) {
-      throw new RefConflictError();
-    }
+    if (errorStatus(err) === 422) return false;
     throw err;
   }
 
   core.info(
     `Recorded ${trackName} run ${args.entry.run_id}-${args.entry.run_attempt} (${di.dateStr}).`,
   );
+  return true;
 }
 
 async function readWorkflowIndexAt(

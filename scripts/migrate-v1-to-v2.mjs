@@ -67,7 +67,6 @@ async function main() {
       const perRunRel = `${trackDir}/${di.yyyy}/${di.mm}/${di.dd}/${entry.run_id}-${runAttempt}.json`;
       const perRunAbs = path.join(destDir, perRunRel);
       await fs.mkdir(path.dirname(perRunAbs), { recursive: true });
-      // run_attempt が undefined だった場合は正規化して書き出す
       const normalized = { ...entry, run_attempt: runAttempt };
       await fs.writeFile(perRunAbs, JSON.stringify(normalized, null, 2) + "\n");
       runs.push({ date: di.dateStr, run_id: entry.run_id, run_attempt: runAttempt });

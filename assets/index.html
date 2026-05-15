@@ -886,8 +886,7 @@
 
   function deriveSourceTitle(source) {
     const e = source.entries[0];
-    if (e) return e.workflow || e.workflow_file || source.track_name || source.path;
-    return source.track_name || source.path;
+    return (e && (e.workflow || e.workflow_file)) || source.track_name || source.dir;
   }
 
   function renderSourceSection(source, idx, container) {
@@ -975,8 +974,6 @@
   }
 
   function updateSourceMeta(source, metaEl) {
-    const el = metaEl || document.getElementById(`source-meta-${source.idx}`);
-    if (!el) return;
     const latest = source.entries.length > 0
       ? new Date(source.entries[source.entries.length - 1].date).toLocaleString()
       : null;
@@ -987,8 +984,8 @@
     const countText = loaded === totalRuns
       ? `${loaded} run(s)`
       : `${loaded}/${totalRuns} run(s) loaded`;
-    el.textContent =
-      `${source.path} · ${countText}` +
+    metaEl.textContent =
+      `${source.dir} · ${countText}` +
       (latest ? ` (latest: ${latest})` : "");
   }
 
@@ -1093,7 +1090,6 @@
       const chartTargets = populated.map((wf, i) => {
         const source = {
           track_name: wf.track_name,
-          path: wf.dir,
           dir: wf.dir,
           runs: wf.runs,
           totalRuns: wf.runs.length,
@@ -1127,15 +1123,13 @@
         return Promise.all(
           chartTargets.map((target) => {
             const wfRunsToFetch = runsInRange(target.source.runs, range);
-            return fetchRunsWithCache(
-              { track_name: target.source.track_name, dir: target.source.dir },
-              wfRunsToFetch,
-              cache,
-            ).then((entries) => {
-              target.source.entries = entries
-                .slice()
-                .sort((a, b) => a.date - b.date);
-            });
+            return fetchRunsWithCache(target.source, wfRunsToFetch, cache).then(
+              (entries) => {
+                target.source.entries = entries
+                  .slice()
+                  .sort((a, b) => a.date - b.date);
+              },
+            );
           }),
         );
       };
