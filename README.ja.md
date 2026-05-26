@@ -2,13 +2,13 @@
 
 [English](README.md) | **日本語**
 
-GitHub Actions の各 workflow run の実行時間を、走るたびに `gh-pages` ブランチへ蓄積していく Action(開発中: v0.1.0 プロトタイプ)。
+GitHub Actions の各 workflow run の実行時間を、走るたびに `gh-pages` ブランチへ蓄積していく Action。
 
 `benchmark-action/github-action-benchmark` のリアルタイム蓄積方式を、ベンチマーク値ではなく workflow / step の duration に応用することを目指している。
 
-## ステータス
+## 仕組み
 
-A**v0.1.0 プロトタイプ**: workflow run の job / step duration を取得して `gh-pages` branch の `data/<track-name>/<YYYY>/<MM>/<DD>/<run_id>-<attempt>.json` (1 run = 1 ファイル) として書き出し、合わせて Chart.js 製の `index.html` を同 branch の root に同梱する。リポジトリの GitHub Pages を有効化すれば、ブラウザで時系列グラフが見える。
+workflow run の job / step duration を取得して `gh-pages` branch の `data/<track-name>/<YYYY>/<MM>/<DD>/<run_id>-<attempt>.json` (1 run = 1 ファイル) として書き出し、合わせて Chart.js 製の `index.html` を同 branch の root に同梱する。リポジトリの GitHub Pages を有効化すれば、ブラウザで時系列グラフが見える。
 
 **🌐 Live demo**: https://hatsu38.github.io/ghtrack/  ← 本リポ自身の dogfood の実物
 
