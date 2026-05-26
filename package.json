@@ -1,6 +1,6 @@
 {
   "name": "ghtrack",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": false,
   "description": "Track GitHub Actions workflow run durations over time on gh-pages.",
   "main": "dist/index.js",

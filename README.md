@@ -2,13 +2,13 @@
 
 **English** | [日本語](README.ja.md)
 
-A GitHub Action that records the execution time of each workflow run into your `gh-pages` branch on every run (in development: v0.1.0 prototype).
+A GitHub Action that records the execution time of each workflow run into your `gh-pages` branch on every run.
 
 The goal is to apply the real-time accumulation pattern of `benchmark-action/github-action-benchmark` to workflow / step duration instead of benchmark values.
 
-## Status
+## How it works
 
-**v0.1.0 prototype**: collects job / step duration of a workflow run and writes it as a per-run JSON file under `data/<track-name>/<YYYY>/<MM>/<DD>/<run_id>-<attempt>.json` on the `gh-pages` branch. A Chart.js-powered `index.html` is bundled at the branch root and the time-series charts are visible in the browser once GitHub Pages is enabled.
+Collects job / step duration of a workflow run and writes it as a per-run JSON file under `data/<track-name>/<YYYY>/<MM>/<DD>/<run_id>-<attempt>.json` on the `gh-pages` branch. A Chart.js-powered `index.html` is bundled at the branch root and the time-series charts are visible in the browser once GitHub Pages is enabled.
 
 **🌐 Live demo**: https://hatsu38.github.io/ghtrack/  ← this repo's own dogfood
 
