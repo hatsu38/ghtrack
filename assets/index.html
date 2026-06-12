@@ -416,17 +416,29 @@
       : sorted[mid];
   }
 
-  // Runner 時間 = 全 Job の duration 合計。
+  function sum(values) {
+    return values.reduce((s, v) => s + v, 0);
+  }
+
+  // 所要時間 = 開始 → 完了の壁時計時間。未記録は null。
+  function totalDurationSec(entry) {
+    return typeof entry.total_duration_sec === "number"
+      ? entry.total_duration_sec
+      : null;
+  }
+
+  // 総実行時間 = 全 Job の duration 合計。
   // 並列実行も積み上げて数えるので、課金対象時間の目安になる。
   function runnerDurationSec(entry) {
-    let sum = 0;
-    let count = 0;
-    for (const j of entry.jobs) {
-      if (typeof j.duration_sec !== "number") continue;
-      sum += j.duration_sec;
-      count++;
-    }
-    return count > 0 ? sum : null;
+    const values = entry.jobs
+      .map((j) => j.duration_sec)
+      .filter((v) => typeof v === "number");
+    return values.length > 0 ? sum(values) : null;
+  }
+
+  // entries から数値として記録されている値だけを集める。
+  function collectValues(entries, value) {
+    return entries.map(value).filter((v) => typeof v === "number");
   }
 
   // items を { date } を持つ前提で bucket 単位にまとめ、key 昇順に返す。
@@ -589,8 +601,7 @@
         label: t("Run duration (sec)", "所要時間 (sec)"),
         color: colorAt(0),
         fill: true,
-        value: (e) =>
-          typeof e.total_duration_sec === "number" ? e.total_duration_sec : null,
+        value: totalDurationSec,
       },
       {
         label: t("Total execution time (sec)", "総実行時間 (sec)"),
@@ -600,13 +611,14 @@
       },
     ];
 
+    // バケット分割は metric に依存しないので 1 回だけ計算する。
+    const groups = bucketed ? groupByBucket(usable, bucket) : null;
+
     const datasets = metrics.map((m) => {
       const points = bucketed
-        ? groupByBucket(usable, bucket)
+        ? groups
             .map(({ key, items }) => {
-              const values = items
-                .map(m.value)
-                .filter((v) => typeof v === "number");
+              const values = collectValues(items, m.value);
               if (values.length === 0) return null;
               return { x: key, y: median(values), bucketCount: values.length, bucket };
             })
@@ -625,7 +637,6 @@
         tension: 0.25,
         fill: m.fill,
         pointRadius: 3,
-        spanGaps: true,
       };
     });
 
@@ -950,45 +961,43 @@
     return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
   }
 
-  // ツールチップ内のミニ図解。並列 3 Job + 後続 1 Job のタイムラインを共通の素材にする。
+  // ツールチップ内のミニ図解。並列 3 Job + 後続 1 Job のタイムラインを共通の素材にし、
+  // Job バーは中立色、メトリクス本体の強調はチャートの系列色 (colorAt) に揃える。
   const TIP_BARS =
-    '<rect x="14" y="4" width="40" height="9" rx="2" fill="var(--accent)"/>' +
-    '<rect x="14" y="17" width="130" height="9" rx="2" fill="var(--accent)"/>' +
-    '<rect x="144" y="30" width="70" height="9" rx="2" fill="var(--accent)"/>';
+    '<rect x="14" y="4" width="40" height="9" rx="2" fill="var(--muted)"/>' +
+    '<rect x="14" y="17" width="130" height="9" rx="2" fill="var(--muted)"/>' +
+    '<rect x="144" y="30" width="70" height="9" rx="2" fill="var(--muted)"/>';
 
-  // 開始 → 終了 (壁時計) の図解: タイムライン全体を amber のブラケットで示す。
-  function wallClockTipHtml() {
+  function buildTipHtml(extraRects, caption, body) {
     return (
       '<svg viewBox="0 0 240 72" aria-hidden="true">' +
       TIP_BARS +
-      '<rect x="14" y="47" width="200" height="3" fill="#c08900"/>' +
-      '<rect x="14" y="43" width="2" height="11" fill="#c08900"/>' +
-      '<rect x="212" y="43" width="2" height="11" fill="#c08900"/>' +
+      extraRects +
       '<text x="114" y="68" text-anchor="middle" font-size="11" fill="var(--muted)">' +
-      t("start → completion", "開始 → 完了") +
+      caption +
       "</text></svg><p>" +
-      t("Time from the first job's start to the last job's completion. Parallel jobs overlap and are counted once — close to how long you actually wait.",
-        "最初の Job が始まってから最後の Job が完了するまでの時間。並列 Job は重ねて 1 回だけ数えるので、実際に待つ時間に近い値です。") +
+      body +
       "</p>"
     );
   }
+
+  // 開始 → 完了 (壁時計) の図解: タイムライン全体をブラケットで示す。
+  const WALL_CLOCK_TIP_HTML = buildTipHtml(
+    `<rect x="14" y="47" width="200" height="3" fill="${colorAt(0)}"/>` +
+    `<rect x="14" y="43" width="2" height="11" fill="${colorAt(0)}"/>` +
+    `<rect x="212" y="43" width="2" height="11" fill="${colorAt(0)}"/>`,
+    t("start → completion", "開始 → 完了"),
+    t("Time from the first job's start to the last job's completion. Parallel jobs overlap and are counted once — close to how long you actually wait.",
+      "最初の Job が始まってから最後の Job が完了するまでの時間。並列 Job は重ねて 1 回だけ数えるので、実際に待つ時間に近い値です。"));
 
   // 全 Job 積み上げの図解: バーを 1 列に連結して「全部足す」を示す。
-  function jobSumTipHtml() {
-    return (
-      '<svg viewBox="0 0 240 72" aria-hidden="true">' +
-      TIP_BARS +
-      '<rect x="14" y="47" width="33" height="9" rx="2" fill="var(--accent)"/>' +
-      '<rect x="48" y="47" width="108" height="9" rx="2" fill="var(--accent)"/>' +
-      '<rect x="157" y="47" width="58" height="9" rx="2" fill="var(--accent)"/>' +
-      '<text x="114" y="68" text-anchor="middle" font-size="11" fill="var(--muted)">' +
-      t("sum of all bars", "バーの長さを全部足す") +
-      "</text></svg><p>" +
-      t("Sum of every job's duration. Parallel jobs are counted separately, so this approximates billable runner time.",
-        "各 Job が Runner を占有した時間の合計。並列 Job も別々に足すので、課金対象時間の目安になります。") +
-      "</p>"
-    );
-  }
+  const JOB_SUM_TIP_HTML = buildTipHtml(
+    `<rect x="14" y="47" width="33" height="9" rx="2" fill="${colorAt(1)}"/>` +
+    `<rect x="48" y="47" width="108" height="9" rx="2" fill="${colorAt(1)}"/>` +
+    `<rect x="157" y="47" width="58" height="9" rx="2" fill="${colorAt(1)}"/>`,
+    t("sum of all bars", "バーの長さを全部足す"),
+    t("Sum of every job's duration. Parallel jobs are counted separately, so this approximates billable runner time.",
+      "各 Job が Runner を占有した時間の合計。並列 Job も別々に足すので、課金対象時間の目安になります。"));
 
   function appendStatCard(parent, label, value, notes, helpHtml) {
     const card = document.createElement("div");
@@ -1038,38 +1047,38 @@
     }
     el.hidden = false;
 
-    const totals = entries
-      .map((e) => e.total_duration_sec)
-      .filter((v) => typeof v === "number");
-    const runners = entries
-      .map(runnerDurationSec)
-      .filter((v) => typeof v === "number");
-    const sum = (arr) => arr.reduce((s, v) => s + v, 0);
+    const totals = collectValues(entries, totalDurationSec);
+    const runners = collectValues(entries, runnerDurationSec);
+    const runnerSum = runners.length > 0 ? sum(runners) : null;
+    const totalAvg = totals.length > 0
+      ? formatDuration(sum(totals) / totals.length)
+      : null;
+    const runnerMedian = formatDuration(median(runners));
+    const runnerAvg = runners.length > 0
+      ? formatDuration(runnerSum / runners.length)
+      : null;
 
     appendStatCard(el,
       t("Median run duration", "所要時間の中央値"),
-      totals.length > 0 ? formatDuration(median(totals)) : "–",
+      formatDuration(median(totals)),
       [
         t(`start → completion per run · ${totals.length} run(s) in range`,
           `開始 → 完了 / 1 run · 期間内 ${totals.length} run`),
-        totals.length > 0
-          ? t(`avg ${formatDuration(sum(totals) / totals.length)} / run`,
-              `平均 ${formatDuration(sum(totals) / totals.length)} / run`)
-          : null,
+        totalAvg &&
+          t(`avg ${totalAvg} / run`, `平均 ${totalAvg} / run`),
       ],
-      wallClockTipHtml());
+      WALL_CLOCK_TIP_HTML);
     appendStatCard(el,
       t("Total execution time", "総実行時間"),
-      runners.length > 0 ? formatDuration(sum(runners)) : "–",
+      formatDuration(runnerSum),
       [
         t("all job durations summed (billing estimate)",
           "全 Job の積み上げ合計（課金の目安）"),
-        runners.length > 0
-          ? t(`median ${formatDuration(median(runners))} · avg ${formatDuration(sum(runners) / runners.length)} / run`,
-              `中央値 ${formatDuration(median(runners))} · 平均 ${formatDuration(sum(runners) / runners.length)} / run`)
-          : null,
+        runnerAvg &&
+          t(`median ${runnerMedian} · avg ${runnerAvg} / run`,
+            `中央値 ${runnerMedian} · 平均 ${runnerAvg} / run`),
       ],
-      jobSumTipHtml());
+      JOB_SUM_TIP_HTML);
   }
 
   // 母数 = success + failure。cancelled / neutral / null は other としてカウントだけする。
