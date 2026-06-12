@@ -107,6 +107,65 @@
       .summary .badge.failure { color: #ff7b72; }
     }
 
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 14px 0 0;
+    }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .stat-card .stat-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .stat-help {
+      position: relative;
+      display: inline-flex;
+      color: var(--muted);
+      cursor: help;
+    }
+    .stat-help:hover, .stat-help:focus { color: var(--accent); outline: none; }
+    .stat-tip {
+      display: none;
+      position: absolute;
+      top: 20px;
+      left: -10px;
+      z-index: 10;
+      width: 270px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+      font-weight: 400;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--fg);
+    }
+    .stat-tip p { margin: 8px 0 0; }
+    .stat-tip svg { display: block; width: 100%; height: auto; }
+    .stat-help:hover .stat-tip,
+    .stat-help:focus .stat-tip { display: block; }
+    .stat-card .stat-value {
+      font-size: 22px;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .stat-card .stat-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
     .chart-wrap {
       position: relative;
       height: 300px;
@@ -198,8 +257,8 @@
       <span data-i18n="totalBucketLabel">Aggregation:</span>
       <select id="totalBucket">
         <option value="run" data-i18n="totalBucketRun">Per run</option>
-        <option value="day" data-i18n="totalBucketDay">Daily (avg)</option>
-        <option value="week" data-i18n="totalBucketWeek">Weekly (avg)</option>
+        <option value="day" data-i18n="totalBucketDay">Daily (median)</option>
+        <option value="week" data-i18n="totalBucketWeek">Weekly (median)</option>
       </select>
     </label>
     <label>
@@ -252,8 +311,8 @@
     rangeCustom: "カスタム…",
     totalBucketLabel: "集計単位:",
     totalBucketRun: "Run ごと",
-    totalBucketDay: "日毎 (平均)",
-    totalBucketWeek: "週ごと (平均)",
+    totalBucketDay: "日毎 (中央値)",
+    totalBucketWeek: "週ごと (中央値)",
   };
   function applyStaticI18n() {
     if (!LOCALE_JA) return;
@@ -347,6 +406,41 @@
     return bucket === "day" || bucket === "week";
   }
 
+  // 中央値。偶数個のときは中央 2 値の平均。空配列は null。
+  function median(values) {
+    if (values.length === 0) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+  }
+
+  function sum(values) {
+    return values.reduce((s, v) => s + v, 0);
+  }
+
+  // 所要時間 = 開始 → 完了の壁時計時間。未記録は null。
+  function totalDurationSec(entry) {
+    return typeof entry.total_duration_sec === "number"
+      ? entry.total_duration_sec
+      : null;
+  }
+
+  // 総実行時間 = 全 Job の duration 合計。
+  // 並列実行も積み上げて数えるので、課金対象時間の目安になる。
+  function runnerDurationSec(entry) {
+    const values = entry.jobs
+      .map((j) => j.duration_sec)
+      .filter((v) => typeof v === "number");
+    return values.length > 0 ? sum(values) : null;
+  }
+
+  // entries から数値として記録されている値だけを集める。
+  function collectValues(entries, value) {
+    return entries.map(value).filter((v) => typeof v === "number");
+  }
+
   // items を { date } を持つ前提で bucket 単位にまとめ、key 昇順に返す。
   function groupByBucket(items, bucket) {
     const groups = new Map();
@@ -371,18 +465,15 @@
       point.bucket === "week"
         ? t(`week of ${dateLabel}`, `${dateLabel} の週`)
         : dateLabel,
-      t(`${point.bucketCount} run(s) averaged`,
-        `${point.bucketCount} 件の平均`),
+      t(`median of ${point.bucketCount} run(s)`,
+        `${point.bucketCount} 件の中央値`),
     ];
   }
 
-  function bucketAvgLabel(bucket) {
-    if (bucket === "week") {
-      return t("Total duration (sec) · weekly avg",
-        "Total duration (sec) · 週平均");
-    }
-    return t("Total duration (sec) · daily avg",
-      "Total duration (sec) · 日平均");
+  function bucketMedianSuffix(bucket) {
+    return bucket === "week"
+      ? t("weekly median", "週中央値")
+      : t("daily median", "日中央値");
   }
 
   function lsGet(key, fallback) {
@@ -501,19 +592,57 @@
     }
     const canvas = prepareCanvas(canvasId);
     if (!canvas) return;
-    const color = colorAt(0);
 
     const bucketed = isBucketed(bucket);
-    const points = bucketed
-      ? groupByBucket(usable, bucket).map(({ key, items }) => {
-          const sum = items.reduce((s, e) => s + e.total_duration_sec, 0);
-          return { x: key, y: sum / items.length, bucketCount: items.length, bucket };
-        })
-      : usable.map((e) => ({ x: e.date, y: e.total_duration_sec, raw: e }));
+
+    // 所要時間 (開始 → 完了の壁時計) と総実行時間 (全 Job 積み上げ) を同じチャートに重ねる。
+    const metrics = [
+      {
+        label: t("Run duration (sec)", "所要時間 (sec)"),
+        color: colorAt(0),
+        fill: true,
+        value: totalDurationSec,
+      },
+      {
+        label: t("Total execution time (sec)", "総実行時間 (sec)"),
+        color: colorAt(1),
+        fill: false,
+        value: runnerDurationSec,
+      },
+    ];
+
+    // バケット分割は metric に依存しないので 1 回だけ計算する。
+    const groups = bucketed ? groupByBucket(usable, bucket) : null;
+
+    const datasets = metrics.map((m) => {
+      const points = bucketed
+        ? groups
+            .map(({ key, items }) => {
+              const values = collectValues(items, m.value);
+              if (values.length === 0) return null;
+              return { x: key, y: median(values), bucketCount: values.length, bucket };
+            })
+            .filter((p) => p !== null)
+        : usable
+            .map((e) => {
+              const v = m.value(e);
+              return v === null ? null : { x: e.date, y: v, raw: e };
+            })
+            .filter((p) => p !== null);
+      return {
+        label: bucketed ? `${m.label} · ${bucketMedianSuffix(bucket)}` : m.label,
+        data: points,
+        borderColor: m.color,
+        backgroundColor: m.color + "26",
+        tension: 0.25,
+        fill: m.fill,
+        pointRadius: 3,
+      };
+    });
 
     const opts = chartOptions((point) => {
       if (point && point.bucket) {
-        return [...bucketTooltipHeader(point), `avg: ${Math.round(point.y)}s`];
+        return [...bucketTooltipHeader(point), `median: ${Math.round(point.y)}s`];
       }
       const e = point && point.raw;
       if (!e) return [];
@@ -527,17 +656,7 @@
 
     new Chart(canvas, {
       type: "line",
-      data: {
-        datasets: [{
-          label: bucketed ? bucketAvgLabel(bucket) : "Total duration (sec)",
-          data: points,
-          borderColor: color,
-          backgroundColor: color + "26",
-          tension: 0.25,
-          fill: true,
-          pointRadius: 3,
-        }],
-      },
+      data: { datasets },
       options: opts,
     });
   }
@@ -717,7 +836,8 @@
     const hasOther = otherKeys.length > 0;
 
     // bucket = day/week のときは entries を bucket 単位にまとめ、
-    // 各 segment の duration を bucket 内で平均化する。
+    // 各 segment の duration を bucket 内の中央値で代表させる。
+    // segment が無い run は 0 として扱う (平均時代の sum/length と同じ母数の取り方)。
     const bucketed = isBucketed(bucket);
     const withSeg = entries.map((entry, idx) => ({
       date: entry.date,
@@ -726,13 +846,16 @@
     }));
     const xUnits = bucketed
       ? groupByBucket(withSeg, bucket).map(({ key, items }) => {
-          const sums = new Map();
+          const keys = new Set();
           for (const { segMap } of items) {
-            for (const [k, v] of segMap) sums.set(k, (sums.get(k) || 0) + v);
+            for (const k of segMap.keys()) keys.add(k);
           }
-          const avgMap = new Map();
-          for (const [k, s] of sums) avgMap.set(k, s / items.length);
-          return { x: key, segMap: avgMap, count: items.length };
+          const medMap = new Map();
+          for (const k of keys) {
+            const values = items.map(({ segMap }) => segMap.get(k) || 0);
+            medMap.set(k, median(values));
+          }
+          return { x: key, segMap: medMap, count: items.length };
         })
       : withSeg.map((u) => ({ x: u.date, segMap: u.segMap, raw: u.entry }));
 
@@ -796,7 +919,7 @@
       } else {
         lines.push(`${segLabel}: ${point.segName}`);
       }
-      lines.push(`${point.bucket ? "avg" : "duration"}: ${Math.round(point.y)}s`);
+      lines.push(`${point.bucket ? "median" : "duration"}: ${Math.round(point.y)}s`);
       return lines;
     });
     if (bucketed) applyBucketAxis(opts, bucket);
@@ -808,13 +931,11 @@
     else noteParts.push(`${totals.size} ${level}`);
     if (groupMatrix) noteParts.push("matrix aggregated");
     if (bucketed) {
-      noteParts.push(bucket === "week"
-        ? t("weekly avg", "週平均")
-        : t("daily avg", "日平均"));
+      noteParts.push(bucketMedianSuffix(bucket));
     }
     noteParts.push(t(
-      "stacks may exceed Total due to parallel execution",
-      "並列実行のため Total Duration とは一致しません"));
+      "stacks may exceed run duration due to parallel execution",
+      "並列実行のため所要時間とは一致しません"));
     setMeta(noteParts.join(" · ") + ".");
   }
 
@@ -823,6 +944,141 @@
     span.className = `badge ${kind}`;
     span.textContent = text;
     parent.appendChild(span);
+  }
+
+  // 秒数を "1h 23m" / "4m 5s" / "42s" 形式へ。
+  function formatDuration(sec) {
+    if (typeof sec !== "number" || !Number.isFinite(sec)) return "–";
+    const s = Math.round(sec);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) {
+      const rs = s % 60;
+      return rs > 0 ? `${m}m ${rs}s` : `${m}m`;
+    }
+    const h = Math.floor(m / 60);
+    const rm = m % 60;
+    return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+  }
+
+  // ツールチップ内のミニ図解。並列 3 Job + 後続 1 Job のタイムラインを共通の素材にし、
+  // Job バーは中立色、メトリクス本体の強調はチャートの系列色 (colorAt) に揃える。
+  const TIP_BARS =
+    '<rect x="14" y="4" width="40" height="9" rx="2" fill="var(--muted)"/>' +
+    '<rect x="14" y="17" width="130" height="9" rx="2" fill="var(--muted)"/>' +
+    '<rect x="144" y="30" width="70" height="9" rx="2" fill="var(--muted)"/>';
+
+  function buildTipHtml(extraRects, caption, body) {
+    return (
+      '<svg viewBox="0 0 240 72" aria-hidden="true">' +
+      TIP_BARS +
+      extraRects +
+      '<text x="114" y="68" text-anchor="middle" font-size="11" fill="var(--muted)">' +
+      caption +
+      "</text></svg><p>" +
+      body +
+      "</p>"
+    );
+  }
+
+  // 開始 → 完了 (壁時計) の図解: タイムライン全体をブラケットで示す。
+  const WALL_CLOCK_TIP_HTML = buildTipHtml(
+    `<rect x="14" y="47" width="200" height="3" fill="${colorAt(0)}"/>` +
+    `<rect x="14" y="43" width="2" height="11" fill="${colorAt(0)}"/>` +
+    `<rect x="212" y="43" width="2" height="11" fill="${colorAt(0)}"/>`,
+    t("start → completion", "開始 → 完了"),
+    t("Time from the first job's start to the last job's completion. Parallel jobs overlap and are counted once — close to how long you actually wait.",
+      "最初の Job が始まってから最後の Job が完了するまでの時間。並列 Job は重ねて 1 回だけ数えるので、実際に待つ時間に近い値です。"));
+
+  // 全 Job 積み上げの図解: バーを 1 列に連結して「全部足す」を示す。
+  const JOB_SUM_TIP_HTML = buildTipHtml(
+    `<rect x="14" y="47" width="33" height="9" rx="2" fill="${colorAt(1)}"/>` +
+    `<rect x="48" y="47" width="108" height="9" rx="2" fill="${colorAt(1)}"/>` +
+    `<rect x="157" y="47" width="58" height="9" rx="2" fill="${colorAt(1)}"/>`,
+    t("sum of all bars", "バーの長さを全部足す"),
+    t("Sum of every job's duration. Parallel jobs are counted separately, so this approximates billable runner time.",
+      "各 Job が Runner を占有した時間の合計。並列 Job も別々に足すので、課金対象時間の目安になります。"));
+
+  function appendStatCard(parent, label, value, notes, helpHtml) {
+    const card = document.createElement("div");
+    card.className = "stat-card";
+    const labelEl = document.createElement("div");
+    labelEl.className = "stat-label";
+    const labelText = document.createElement("span");
+    labelText.textContent = label;
+    labelEl.appendChild(labelText);
+    if (helpHtml) {
+      const help = document.createElement("span");
+      help.className = "stat-help";
+      help.tabIndex = 0;
+      help.innerHTML =
+        '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">' +
+        '<circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+        '<text x="8" y="11.5" text-anchor="middle" font-size="10" fill="currentColor">?</text>' +
+        "</svg>" +
+        `<span class="stat-tip" role="tooltip">${helpHtml}</span>`;
+      labelEl.appendChild(help);
+    }
+    card.appendChild(labelEl);
+    const valueEl = document.createElement("div");
+    valueEl.className = "stat-value";
+    valueEl.textContent = value;
+    card.appendChild(valueEl);
+    for (const note of notes || []) {
+      if (!note) continue;
+      const noteEl = document.createElement("div");
+      noteEl.className = "stat-note";
+      noteEl.textContent = note;
+      card.appendChild(noteEl);
+    }
+    parent.appendChild(card);
+  }
+
+  // 選択中の期間に対する統計カード。
+  // 実行時間 (開始 → 終了) は中央値を主役に、
+  // 総実行時間 (全 Job 積み上げ) は期間合計を主役にする。
+  function renderStats(entries, statsId) {
+    const el = document.getElementById(statsId);
+    if (!el) return;
+    el.innerHTML = "";
+    if (entries.length === 0) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+
+    const totals = collectValues(entries, totalDurationSec);
+    const runners = collectValues(entries, runnerDurationSec);
+    const runnerSum = runners.length > 0 ? sum(runners) : null;
+    const totalAvg = totals.length > 0
+      ? formatDuration(sum(totals) / totals.length)
+      : null;
+    const runnerMedian = formatDuration(median(runners));
+    const runnerAvg = runners.length > 0
+      ? formatDuration(runnerSum / runners.length)
+      : null;
+
+    appendStatCard(el,
+      t("Median run duration", "所要時間の中央値"),
+      formatDuration(median(totals)),
+      [
+        t(`start → completion per run · ${totals.length} run(s) in range`,
+          `開始 → 完了 / 1 run · 期間内 ${totals.length} run`),
+        totalAvg &&
+          t(`avg ${totalAvg} / run`, `平均 ${totalAvg} / run`),
+      ],
+      WALL_CLOCK_TIP_HTML);
+    appendStatCard(el,
+      t("Total execution time", "総実行時間"),
+      formatDuration(runnerSum),
+      [
+        t("all job durations summed (billing estimate)",
+          "全 Job の積み上げ合計（課金の目安）"),
+        runnerAvg &&
+          t(`median ${runnerMedian} · avg ${runnerAvg} / run`,
+            `中央値 ${runnerMedian} · 平均 ${runnerAvg} / run`),
+      ],
+      JOB_SUM_TIP_HTML);
   }
 
   // 母数 = success + failure。cancelled / neutral / null は other としてカウントだけする。
@@ -894,6 +1150,7 @@
     const jobCanvasId = `job-${idx}`;
     const jobMetaId = `job-meta-${idx}`;
     const summaryId = `summary-${idx}`;
+    const statsId = `stats-${idx}`;
     const breakdownCanvasId = `breakdown-${idx}`;
     const breakdownMetaId = `breakdown-meta-${idx}`;
     const sourceMetaId = `source-meta-${idx}`;
@@ -916,8 +1173,14 @@
     summary.id = summaryId;
     section.appendChild(summary);
 
+    const stats = document.createElement("div");
+    stats.className = "stats";
+    stats.id = statsId;
+    section.appendChild(stats);
+
     const totalH3 = document.createElement("h3");
-    totalH3.textContent = t("Total duration per run", "Run ごとの Total Duration");
+    totalH3.textContent = t("Run duration & total execution time",
+      "Run ごとの所要時間・総実行時間");
     section.appendChild(totalH3);
 
     const totalWrap = document.createElement("div");
@@ -967,6 +1230,7 @@
       jobCanvasId,
       jobMetaId,
       summaryId,
+      statsId,
       breakdownCanvasId,
       breakdownMetaId,
       sourceMetaId,
@@ -1110,6 +1374,7 @@
         for (const target of chartTargets) {
           const filtered = filterByRange(target.source.entries, range);
           renderSummary(filtered, target.summaryId, hasFilter);
+          renderStats(filtered, target.statsId);
           buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
           buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, bucket, emptyMsg);
           buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
