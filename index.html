@@ -120,10 +120,41 @@
       padding: 12px 14px;
     }
     .stat-card .stat-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
       font-size: 12px;
       font-weight: 600;
       color: var(--muted);
     }
+    .stat-help {
+      position: relative;
+      display: inline-flex;
+      color: var(--muted);
+      cursor: help;
+    }
+    .stat-help:hover, .stat-help:focus { color: var(--accent); outline: none; }
+    .stat-tip {
+      display: none;
+      position: absolute;
+      top: 20px;
+      left: -10px;
+      z-index: 10;
+      width: 270px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+      font-weight: 400;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--fg);
+    }
+    .stat-tip p { margin: 8px 0 0; }
+    .stat-tip svg { display: block; width: 100%; height: auto; }
+    .stat-help:hover .stat-tip,
+    .stat-help:focus .stat-tip { display: block; }
     .stat-card .stat-value {
       font-size: 22px;
       font-weight: 600;
@@ -552,17 +583,17 @@
 
     const bucketed = isBucketed(bucket);
 
-    // Total (wall-clock) と Runner 時間 (全 Job 合計) を同じチャートに重ねる。
+    // 所要時間 (開始 → 完了の壁時計) と総実行時間 (全 Job 積み上げ) を同じチャートに重ねる。
     const metrics = [
       {
-        label: "Total duration (sec)",
+        label: t("Run duration (sec)", "所要時間 (sec)"),
         color: colorAt(0),
         fill: true,
         value: (e) =>
           typeof e.total_duration_sec === "number" ? e.total_duration_sec : null,
       },
       {
-        label: t("Runner time (sec)", "Runner 時間 (sec)"),
+        label: t("Total execution time (sec)", "総実行時間 (sec)"),
         color: colorAt(1),
         fill: false,
         value: runnerDurationSec,
@@ -892,8 +923,8 @@
       noteParts.push(bucketMedianSuffix(bucket));
     }
     noteParts.push(t(
-      "stacks may exceed Total due to parallel execution",
-      "並列実行のため Total Duration とは一致しません"));
+      "stacks may exceed run duration due to parallel execution",
+      "並列実行のため所要時間とは一致しません"));
     setMeta(noteParts.join(" · ") + ".");
   }
 
@@ -919,18 +950,73 @@
     return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
   }
 
-  function appendStatCard(parent, label, value, note) {
+  // ツールチップ内のミニ図解。並列 3 Job + 後続 1 Job のタイムラインを共通の素材にする。
+  const TIP_BARS =
+    '<rect x="14" y="4" width="40" height="9" rx="2" fill="var(--accent)"/>' +
+    '<rect x="14" y="17" width="130" height="9" rx="2" fill="var(--accent)"/>' +
+    '<rect x="144" y="30" width="70" height="9" rx="2" fill="var(--accent)"/>';
+
+  // 開始 → 終了 (壁時計) の図解: タイムライン全体を amber のブラケットで示す。
+  function wallClockTipHtml() {
+    return (
+      '<svg viewBox="0 0 240 72" aria-hidden="true">' +
+      TIP_BARS +
+      '<rect x="14" y="47" width="200" height="3" fill="#c08900"/>' +
+      '<rect x="14" y="43" width="2" height="11" fill="#c08900"/>' +
+      '<rect x="212" y="43" width="2" height="11" fill="#c08900"/>' +
+      '<text x="114" y="68" text-anchor="middle" font-size="11" fill="var(--muted)">' +
+      t("start → completion", "開始 → 完了") +
+      "</text></svg><p>" +
+      t("Time from the first job's start to the last job's completion. Parallel jobs overlap and are counted once — close to how long you actually wait.",
+        "最初の Job が始まってから最後の Job が完了するまでの時間。並列 Job は重ねて 1 回だけ数えるので、実際に待つ時間に近い値です。") +
+      "</p>"
+    );
+  }
+
+  // 全 Job 積み上げの図解: バーを 1 列に連結して「全部足す」を示す。
+  function jobSumTipHtml() {
+    return (
+      '<svg viewBox="0 0 240 72" aria-hidden="true">' +
+      TIP_BARS +
+      '<rect x="14" y="47" width="33" height="9" rx="2" fill="var(--accent)"/>' +
+      '<rect x="48" y="47" width="108" height="9" rx="2" fill="var(--accent)"/>' +
+      '<rect x="157" y="47" width="58" height="9" rx="2" fill="var(--accent)"/>' +
+      '<text x="114" y="68" text-anchor="middle" font-size="11" fill="var(--muted)">' +
+      t("sum of all bars", "バーの長さを全部足す") +
+      "</text></svg><p>" +
+      t("Sum of every job's duration. Parallel jobs are counted separately, so this approximates billable runner time.",
+        "各 Job が Runner を占有した時間の合計。並列 Job も別々に足すので、課金対象時間の目安になります。") +
+      "</p>"
+    );
+  }
+
+  function appendStatCard(parent, label, value, notes, helpHtml) {
     const card = document.createElement("div");
     card.className = "stat-card";
     const labelEl = document.createElement("div");
     labelEl.className = "stat-label";
-    labelEl.textContent = label;
+    const labelText = document.createElement("span");
+    labelText.textContent = label;
+    labelEl.appendChild(labelText);
+    if (helpHtml) {
+      const help = document.createElement("span");
+      help.className = "stat-help";
+      help.tabIndex = 0;
+      help.innerHTML =
+        '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">' +
+        '<circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+        '<text x="8" y="11.5" text-anchor="middle" font-size="10" fill="currentColor">?</text>' +
+        "</svg>" +
+        `<span class="stat-tip" role="tooltip">${helpHtml}</span>`;
+      labelEl.appendChild(help);
+    }
     card.appendChild(labelEl);
     const valueEl = document.createElement("div");
     valueEl.className = "stat-value";
     valueEl.textContent = value;
     card.appendChild(valueEl);
-    if (note) {
+    for (const note of notes || []) {
+      if (!note) continue;
       const noteEl = document.createElement("div");
       noteEl.className = "stat-note";
       noteEl.textContent = note;
@@ -940,8 +1026,8 @@
   }
 
   // 選択中の期間に対する統計カード。
-  // 総実行時間 (wall-clock 合計) / 総 Runner 時間 (全 Job 合計) と、
-  // それぞれの run あたり中央値を表示する。
+  // 実行時間 (開始 → 終了) は中央値を主役に、
+  // 総実行時間 (全 Job 積み上げ) は期間合計を主役にする。
   function renderStats(entries, statsId) {
     const el = document.getElementById(statsId);
     if (!el) return;
@@ -961,22 +1047,29 @@
     const sum = (arr) => arr.reduce((s, v) => s + v, 0);
 
     appendStatCard(el,
-      t("Total duration", "総実行時間"),
-      totals.length > 0 ? formatDuration(sum(totals)) : "–",
-      t(`sum of ${totals.length} run(s) in range`,
-        `期間内 ${totals.length} run の合計`));
-    appendStatCard(el,
-      t("Total runner time", "総 Runner 時間"),
-      runners.length > 0 ? formatDuration(sum(runners)) : "–",
-      t("sum of all job durations", "全 Job 実行時間の合計"));
-    appendStatCard(el,
-      t("Median duration", "実行時間の中央値"),
+      t("Median run duration", "所要時間の中央値"),
       totals.length > 0 ? formatDuration(median(totals)) : "–",
-      t("per run", "1 run あたり"));
+      [
+        t(`start → completion per run · ${totals.length} run(s) in range`,
+          `開始 → 完了 / 1 run · 期間内 ${totals.length} run`),
+        totals.length > 0
+          ? t(`avg ${formatDuration(sum(totals) / totals.length)} / run`,
+              `平均 ${formatDuration(sum(totals) / totals.length)} / run`)
+          : null,
+      ],
+      wallClockTipHtml());
     appendStatCard(el,
-      t("Median runner time", "Runner 時間の中央値"),
-      runners.length > 0 ? formatDuration(median(runners)) : "–",
-      t("per run", "1 run あたり"));
+      t("Total execution time", "総実行時間"),
+      runners.length > 0 ? formatDuration(sum(runners)) : "–",
+      [
+        t("all job durations summed (billing estimate)",
+          "全 Job の積み上げ合計（課金の目安）"),
+        runners.length > 0
+          ? t(`median ${formatDuration(median(runners))} · avg ${formatDuration(sum(runners) / runners.length)} / run`,
+              `中央値 ${formatDuration(median(runners))} · 平均 ${formatDuration(sum(runners) / runners.length)} / run`)
+          : null,
+      ],
+      jobSumTipHtml());
   }
 
   // 母数 = success + failure。cancelled / neutral / null は other としてカウントだけする。
@@ -1077,7 +1170,8 @@
     section.appendChild(stats);
 
     const totalH3 = document.createElement("h3");
-    totalH3.textContent = t("Total duration per run", "Run ごとの Total Duration");
+    totalH3.textContent = t("Run duration & total execution time",
+      "Run ごとの所要時間・総実行時間");
     section.appendChild(totalH3);
 
     const totalWrap = document.createElement("div");
