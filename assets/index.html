@@ -259,6 +259,7 @@
         <option value="run" data-i18n="totalBucketRun">Per run</option>
         <option value="day" data-i18n="totalBucketDay">Daily (median)</option>
         <option value="week" data-i18n="totalBucketWeek">Weekly (median)</option>
+        <option value="month" data-i18n="totalBucketMonth">Monthly (median)</option>
       </select>
     </label>
     <label>
@@ -313,6 +314,7 @@
     totalBucketRun: "Run ごと",
     totalBucketDay: "日毎 (中央値)",
     totalBucketWeek: "週ごと (中央値)",
+    totalBucketMonth: "月ごと (中央値)",
   };
   function applyStaticI18n() {
     if (!LOCALE_JA) return;
@@ -350,6 +352,7 @@
   // 失敗扱いする conclusion。cancelled / neutral / null は集計対象外。
   const FAIL_CONCLUSIONS = new Set(["failure", "timed_out"]);
   const FAIL_COLOR = "#cf222e";
+  const SUCCESS_COLOR = "#2da44e";
 
   function isFailJob(job) {
     return !!job && FAIL_CONCLUSIONS.has(job.conclusion);
@@ -383,9 +386,12 @@
     return v === "steps" ? "steps" : "jobs";
   }
 
+  // 集計単位のうち時間バケット(= Run 以外)。getTotalBucket と isBucketed で共有する。
+  const BUCKETED_VALUES = new Set(["day", "week", "month"]);
+
   function getTotalBucket() {
     const v = lsGet(TOTAL_BUCKET_KEY, "run");
-    return v === "day" || v === "week" ? v : "run";
+    return BUCKETED_VALUES.has(v) ? v : "run";
   }
 
   // ローカルタイムで日/週の先頭にスナップした timestamp を返す。
@@ -398,12 +404,14 @@
       const dow = d.getDay();
       const diff = (dow + 6) % 7;
       d.setDate(d.getDate() - diff);
+    } else if (bucket === "month") {
+      d.setDate(1);
     }
     return d.getTime();
   }
 
   function isBucketed(bucket) {
-    return bucket === "day" || bucket === "week";
+    return BUCKETED_VALUES.has(bucket);
   }
 
   // 中央値。偶数個のときは中央 2 値の平均。空配列は null。
@@ -454,26 +462,31 @@
   }
 
   function applyBucketAxis(opts, bucket) {
-    opts.scales.x.time.minUnit = bucket === "week" ? "week" : "day";
+    opts.scales.x.time.minUnit =
+      bucket === "month" ? "month" : bucket === "week" ? "week" : "day";
     opts.scales.x.time.tooltipFormat = "yyyy-MM-dd";
   }
 
+  // 期間見出し文字列。day はそのまま日付、week/month は "〜の週/月"。
+  function bucketPeriodLabel(bucket, xMs) {
+    const dateLabel = new Date(xMs).toLocaleDateString();
+    if (bucket === "week") return t(`week of ${dateLabel}`, `${dateLabel} の週`);
+    if (bucket === "month") return t(`month of ${dateLabel}`, `${dateLabel} の月`);
+    return dateLabel;
+  }
+
   function bucketTooltipHeader(point) {
-    const start = new Date(point.x);
-    const dateLabel = start.toLocaleDateString();
     return [
-      point.bucket === "week"
-        ? t(`week of ${dateLabel}`, `${dateLabel} の週`)
-        : dateLabel,
+      bucketPeriodLabel(point.bucket, point.x),
       t(`median of ${point.bucketCount} run(s)`,
         `${point.bucketCount} 件の中央値`),
     ];
   }
 
   function bucketMedianSuffix(bucket) {
-    return bucket === "week"
-      ? t("weekly median", "週中央値")
-      : t("daily median", "日中央値");
+    if (bucket === "month") return t("monthly median", "月中央値");
+    if (bucket === "week") return t("weekly median", "週中央値");
+    return t("daily median", "日中央値");
   }
 
   function lsGet(key, fallback) {
@@ -640,11 +653,42 @@
       };
     });
 
+    // 成功率(%)を第2軸へ折れ線で重ねる。率は割合なので Run 単位(0/100)では
+    // 意味を持たないため、日/週/月に集計されているときだけ描く。
+    // 母数 = success + failure(other=cancelled/neutral/null は除外)。
+    // 所要時間の median は duration 記録済み(usable)ベースだが、率は全 run を
+    // 母数にしたいので entries 全体を bucket 化して数える。
+    const ratePoints = bucketed
+      ? groupByBucket(entries, bucket)
+          .map(({ key, items }) => {
+            const { success, failure } = summarizeRuns(items);
+            const counted = success + failure;
+            if (counted === 0) return null;
+            return {
+              x: key,
+              y: (success / counted) * 100,
+              success,
+              counted,
+              bucket,
+              isRate: true,
+            };
+          })
+          .filter((p) => p !== null)
+      : [];
+
     const opts = chartOptions((point) => {
-      if (point && point.bucket) {
+      if (!point) return [];
+      if (point.isRate) {
+        return [
+          bucketPeriodLabel(point.bucket, point.x),
+          t(`success rate ${point.y.toFixed(1)}% (${point.success}/${point.counted})`,
+            `成功率 ${point.y.toFixed(1)}% (${point.success}/${point.counted} 件)`),
+        ];
+      }
+      if (point.bucket) {
         return [...bucketTooltipHeader(point), `median: ${Math.round(point.y)}s`];
       }
-      const e = point && point.raw;
+      const e = point.raw;
       if (!e) return [];
       return [
         `commit ${String(e.commit).slice(0, 7)}`,
@@ -653,6 +697,30 @@
       ];
     });
     if (bucketed) applyBucketAxis(opts, bucket);
+    // 成功率(%)を重ねるときだけ、系列と右軸(0–100%)をまとめて足す。
+    // 左軸(秒)のグリッドとは重ねない。
+    if (ratePoints.length > 0) {
+      datasets.push({
+        label: t("Success rate (%)", "成功率 (%)"),
+        data: ratePoints,
+        borderColor: SUCCESS_COLOR,
+        backgroundColor: SUCCESS_COLOR + "26",
+        borderDash: [5, 4],
+        tension: 0.25,
+        fill: false,
+        pointRadius: 3,
+        yAxisID: "y1",
+        order: 0,
+      });
+      opts.scales.y1 = {
+        position: "right",
+        min: 0,
+        max: 100,
+        title: { display: true, text: t("Success rate (%)", "成功率 (%)") },
+        ticks: { callback: (v) => v + "%" },
+        grid: { drawOnChartArea: false },
+      };
+    }
 
     new Chart(canvas, {
       type: "line",
