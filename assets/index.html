@@ -725,6 +725,83 @@
     });
   }
 
+  // 失敗率(%)の推移。率は割合なので Run 単位(0/100)では意味を持たない。
+  // 日/週/月に集計されているときだけ描画し、それ以外は注記を出す。
+  // 母数 = success + failure(other は除外)。
+  function buildFailRateChart(entries, canvasId, bucket) {
+    if (!isBucketed(bucket)) {
+      replaceWithEmpty(canvasId,
+        t("Failure rate is shown for daily / weekly / monthly aggregation.",
+          "失敗率は日次 / 週次 / 月次の集計で表示されます。"));
+      return;
+    }
+    if (entries.length === 0) {
+      replaceWithEmpty(canvasId,
+        t("No runs in selected range.", "選択した期間に該当する run がありません。"));
+      return;
+    }
+
+    const points = groupByBucket(entries, bucket)
+      .map(({ key, items }) => {
+        let success = 0, failure = 0;
+        for (const e of items) {
+          const c = deriveRunConclusion(e);
+          if (c === "success") success++;
+          else if (c === "failure") failure++;
+        }
+        const counted = success + failure;
+        if (counted === 0) return null;
+        return {
+          x: key,
+          y: (failure / counted) * 100,
+          failure,
+          counted,
+          bucket,
+        };
+      })
+      .filter((p) => p !== null);
+
+    if (points.length === 0) {
+      replaceWithEmpty(canvasId,
+        t("No success/failure runs to compute rate.",
+          "成功 / 失敗の run が無いため失敗率を計算できません。"));
+      return;
+    }
+
+    const canvas = prepareCanvas(canvasId);
+    if (!canvas) return;
+
+    const opts = chartOptions((point) => {
+      if (!point) return [];
+      return [
+        bucketPeriodLabel(point.bucket, point.x),
+        t(`failure rate ${point.y.toFixed(1)}% (${point.failure}/${point.counted})`,
+          `失敗率 ${point.y.toFixed(1)}% (${point.failure}/${point.counted} 件)`),
+      ];
+    });
+    opts.scales.y.min = 0;
+    opts.scales.y.max = 100;
+    opts.scales.y.title = { display: true, text: t("Failure rate (%)", "失敗率 (%)") };
+    opts.scales.y.ticks = { callback: (v) => v + "%" };
+    applyBucketAxis(opts, bucket);
+
+    new Chart(canvas, {
+      type: "line",
+      data: {
+        datasets: [{
+          label: t("Failure rate (%)", "失敗率 (%)"),
+          data: points,
+          borderColor: FAIL_COLOR,
+          backgroundColor: FAIL_COLOR + "26",
+          tension: 0.25,
+          fill: true,
+          pointRadius: 3,
+        }],
+      },
+      options: opts,
+    });
+  }
+
   function buildJobChart(entries, canvasId, metaId, groupMatrix, emptyMessage) {
     // entry ごとに groupName → matching jobs の Map を一度だけ作る。
     // 後続の dataset 構築で `groupKeyFor` 再評価と二重 filter を避ける。
@@ -1211,6 +1288,7 @@
 
   function renderSourceSection(source, idx, container) {
     const totalCanvasId = `total-${idx}`;
+    const failRateCanvasId = `fail-rate-${idx}`;
     const jobCanvasId = `job-${idx}`;
     const jobMetaId = `job-meta-${idx}`;
     const summaryId = `summary-${idx}`;
@@ -1254,6 +1332,17 @@
     totalWrap.appendChild(totalCanvas);
     section.appendChild(totalWrap);
 
+    const failRateH3 = document.createElement("h3");
+    failRateH3.textContent = t("Failure rate trend", "失敗率の推移");
+    section.appendChild(failRateH3);
+
+    const failRateWrap = document.createElement("div");
+    failRateWrap.className = "chart-wrap";
+    const failRateCanvas = document.createElement("canvas");
+    failRateCanvas.id = failRateCanvasId;
+    failRateWrap.appendChild(failRateCanvas);
+    section.appendChild(failRateWrap);
+
     const breakdownH3 = document.createElement("h3");
     breakdownH3.textContent = t("Duration breakdown (cumulative)", "実行時間の内訳 (累積)");
     section.appendChild(breakdownH3);
@@ -1291,6 +1380,7 @@
     return {
       source,
       totalCanvasId,
+      failRateCanvasId,
       jobCanvasId,
       jobMetaId,
       summaryId,
@@ -1440,6 +1530,7 @@
           renderSummary(filtered, target.summaryId, hasFilter);
           renderStats(filtered, target.statsId);
           buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
+          buildFailRateChart(filtered, target.failRateCanvasId, bucket);
           buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, bucket, emptyMsg);
           buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
           const metaEl = document.getElementById(target.sourceMetaId);
