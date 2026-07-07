@@ -657,8 +657,10 @@
 
     // 失敗件数を第2軸(件数)へ棒で重ねる。時間(秒)とは単位が違うので y1 に分離。
     // 件数が出る箇所だけ棒を立てたいので y>0 の点に絞る。
+    // 所要時間の median は duration 記録済み(usable)ベースだが、失敗件数は
+    // 失敗率チャート(全 entries 基準)と分母を揃えるため entries から数える。
     const failData = bucketed
-      ? groups
+      ? groupByBucket(entries, bucket)
           .map(({ key, items }) => ({
             x: key,
             y: items.filter(isFailRun).length,
@@ -667,7 +669,7 @@
             isFail: true,
           }))
           .filter((p) => p.y > 0)
-      : usable
+      : entries
           .filter(isFailRun)
           .map((e) => ({ x: e.date, y: 1, raw: e, isFail: true }));
     datasets.push({
