@@ -1,5 +1,12 @@
 # 失敗件数・失敗率チャート 実装計画
 
+> **⚠️ 実装中の設計変更(2026-07-08)**: 本計画は Task 1–3 として実装後、ブラウザ確認を経て設計を変更した。**最終仕様**は spec の注記を参照:
+> - 失敗「件数」の棒は**廃止**(Task 2 の成果物を撤去)
+> - 率は**失敗率 → 成功率(%)** に変更し、専用チャート(Task 3 の `buildFailRateChart`)ではなく**時間チャートに緑の破線で重ねて**表示(`buildTotalChart` 内)
+> - 集計単位「月次」追加(Task 1)はそのまま採用
+>
+> 以下の Task 別記述は当初計画の履歴として残す。実際の最終コードは `assets/index.html` と spec を正とする。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** ghtrack ダッシュボードに、失敗の「件数」を既存の時間チャートへ重ねて表示し、失敗の「率」を専用の折れ線チャートで表示する。あわせて集計単位に「月次」を追加する。
