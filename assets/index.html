@@ -372,6 +372,11 @@
     return "other";
   }
 
+  // run 単位で失敗とみなすか。deriveRunConclusion に一本化して定義を揃える。
+  function isFailRun(entry) {
+    return deriveRunConclusion(entry) === "failure";
+  }
+
   const RANGE_PRESET_KEY = "ghtrack:rangePreset";
   const RANGE_FROM_KEY = "ghtrack:rangeFrom";
   const RANGE_TO_KEY = "ghtrack:rangeTo";
@@ -650,11 +655,52 @@
       };
     });
 
+    // 失敗件数を第2軸(件数)へ棒で重ねる。時間(秒)とは単位が違うので y1 に分離。
+    // 件数が出る箇所だけ棒を立てたいので y>0 の点に絞る。
+    const failData = bucketed
+      ? groups
+          .map(({ key, items }) => ({
+            x: key,
+            y: items.filter(isFailRun).length,
+            bucketCount: items.length,
+            bucket,
+            isFail: true,
+          }))
+          .filter((p) => p.y > 0)
+      : usable
+          .filter(isFailRun)
+          .map((e) => ({ x: e.date, y: 1, raw: e, isFail: true }));
+    datasets.push({
+      type: "bar",
+      label: t("Failures", "失敗数"),
+      data: failData,
+      backgroundColor: FAIL_COLOR + "cc",
+      borderColor: FAIL_COLOR,
+      borderWidth: 0,
+      maxBarThickness: 18,
+      yAxisID: "y1",
+      order: 2,
+    });
+
     const opts = chartOptions((point) => {
-      if (point && point.bucket) {
+      if (!point) return [];
+      if (point.isFail) {
+        if (point.bucket) {
+          return [
+            bucketPeriodLabel(point.bucket, point.x),
+            t(`${point.y} failed / ${point.bucketCount} run(s)`,
+              `失敗 ${point.y} 件 / 対象 ${point.bucketCount} 件`),
+          ];
+        }
+        return [
+          `commit ${String(point.raw.commit).slice(0, 7)}`,
+          t("failed", "失敗"),
+        ];
+      }
+      if (point.bucket) {
         return [...bucketTooltipHeader(point), `median: ${Math.round(point.y)}s`];
       }
-      const e = point && point.raw;
+      const e = point.raw;
       if (!e) return [];
       return [
         `commit ${String(e.commit).slice(0, 7)}`,
@@ -662,6 +708,14 @@
         e.run_attempt && e.run_attempt > 1 ? `run_attempt: ${e.run_attempt}` : null,
       ];
     });
+    // 失敗件数用の右軸。件数は整数・0 始まり。左軸(秒)のグリッドとは重ねない。
+    opts.scales.y1 = {
+      position: "right",
+      beginAtZero: true,
+      ticks: { precision: 0 },
+      title: { display: true, text: t("Failures", "失敗数") },
+      grid: { drawOnChartArea: false },
+    };
     if (bucketed) applyBucketAxis(opts, bucket);
 
     new Chart(canvas, {
