@@ -386,9 +386,12 @@
     return v === "steps" ? "steps" : "jobs";
   }
 
+  // 集計単位のうち時間バケット(= Run 以外)。getTotalBucket と isBucketed で共有する。
+  const BUCKETED_VALUES = new Set(["day", "week", "month"]);
+
   function getTotalBucket() {
     const v = lsGet(TOTAL_BUCKET_KEY, "run");
-    return v === "day" || v === "week" || v === "month" ? v : "run";
+    return BUCKETED_VALUES.has(v) ? v : "run";
   }
 
   // ローカルタイムで日/週の先頭にスナップした timestamp を返す。
@@ -408,7 +411,7 @@
   }
 
   function isBucketed(bucket) {
-    return bucket === "day" || bucket === "week" || bucket === "month";
+    return BUCKETED_VALUES.has(bucket);
   }
 
   // 中央値。偶数個のときは中央 2 値の平均。空配列は null。
@@ -482,9 +485,8 @@
 
   function bucketMedianSuffix(bucket) {
     if (bucket === "month") return t("monthly median", "月中央値");
-    return bucket === "week"
-      ? t("weekly median", "週中央値")
-      : t("daily median", "日中央値");
+    if (bucket === "week") return t("weekly median", "週中央値");
+    return t("daily median", "日中央値");
   }
 
   function lsGet(key, fallback) {
@@ -659,12 +661,7 @@
     const ratePoints = bucketed
       ? groupByBucket(entries, bucket)
           .map(({ key, items }) => {
-            let success = 0, failure = 0;
-            for (const e of items) {
-              const c = deriveRunConclusion(e);
-              if (c === "success") success++;
-              else if (c === "failure") failure++;
-            }
+            const { success, failure } = summarizeRuns(items);
             const counted = success + failure;
             if (counted === 0) return null;
             return {
@@ -678,20 +675,6 @@
           })
           .filter((p) => p !== null)
       : [];
-    if (ratePoints.length > 0) {
-      datasets.push({
-        label: t("Success rate (%)", "成功率 (%)"),
-        data: ratePoints,
-        borderColor: SUCCESS_COLOR,
-        backgroundColor: SUCCESS_COLOR + "26",
-        borderDash: [5, 4],
-        tension: 0.25,
-        fill: false,
-        pointRadius: 3,
-        yAxisID: "y1",
-        order: 0,
-      });
-    }
 
     const opts = chartOptions((point) => {
       if (!point) return [];
@@ -714,8 +697,21 @@
       ];
     });
     if (bucketed) applyBucketAxis(opts, bucket);
-    // 成功率(%)を重ねるときだけ右軸(0–100%)を足す。左軸(秒)のグリッドとは重ねない。
+    // 成功率(%)を重ねるときだけ、系列と右軸(0–100%)をまとめて足す。
+    // 左軸(秒)のグリッドとは重ねない。
     if (ratePoints.length > 0) {
+      datasets.push({
+        label: t("Success rate (%)", "成功率 (%)"),
+        data: ratePoints,
+        borderColor: SUCCESS_COLOR,
+        backgroundColor: SUCCESS_COLOR + "26",
+        borderDash: [5, 4],
+        tension: 0.25,
+        fill: false,
+        pointRadius: 3,
+        yAxisID: "y1",
+        order: 0,
+      });
       opts.scales.y1 = {
         position: "right",
         min: 0,
