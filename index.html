@@ -379,9 +379,6 @@
   const BREAKDOWN_LEVEL_KEY = "ghtrack:breakdownLevel";
   const TOTAL_BUCKET_KEY = "ghtrack:totalBucket";
   const DAY_MS = 86400000;
-  // 同時 fetch 数の上限。無制限に Promise.all すると、期間内の run 数が多いときに
-  // net::ERR_INSUFFICIENT_RESOURCES で一部の fetch が失敗し、その run が黙って欠落する。
-  const FETCH_CONCURRENCY = 12;
   const OTHER_COLOR = "#8b949e";
 
   function getBreakdownLevel() {
@@ -1386,41 +1383,23 @@
     });
   }
 
-  // items を limit 件ずつの同時実行に抑えて fn を呼び、結果を元の順序で返す。
-  function mapWithConcurrency(items, limit, fn) {
-    const results = new Array(items.length);
-    let next = 0;
-    function runNext() {
-      const i = next++;
-      if (i >= items.length) return Promise.resolve();
-      return Promise.resolve(fn(items[i], i)).then((r) => {
-        results[i] = r;
-        return runNext();
-      });
-    }
-    const workers = Array.from({ length: Math.min(limit, items.length) }, runNext);
-    return Promise.all(workers).then(() => results);
-  }
-
-  function fetchRunWithRetry(path) {
-    return fetchJson(path).catch(() => fetchJson(path));
-  }
-
   function fetchRunsWithCache(workflow, runs, cache) {
-    return mapWithConcurrency(runs, FETCH_CONCURRENCY, (run) => {
-      const key = `${workflow.track_name}|${run.run_id}|${run.run_attempt}`;
-      const cached = cache.get(key);
-      if (cached) return Promise.resolve(cached);
-      return fetchRunWithRetry(runFilePath(workflow, run))
-        .then((entry) => {
-          cache.set(key, entry);
-          return entry;
-        })
-        .catch((err) => {
-          console.warn(`ghtrack: failed to load ${runFilePath(workflow, run)}: ${err.message}`);
-          return null;
-        });
-    }).then((entries) => entries.filter((e) => e !== null));
+    return Promise.all(
+      runs.map((run) => {
+        const key = `${workflow.track_name}|${run.run_id}|${run.run_attempt}`;
+        const cached = cache.get(key);
+        if (cached) return Promise.resolve(cached);
+        return fetchJson(runFilePath(workflow, run))
+          .then((entry) => {
+            cache.set(key, entry);
+            return entry;
+          })
+          .catch((err) => {
+            console.warn(`ghtrack: failed to load ${runFilePath(workflow, run)}: ${err.message}`);
+            return null;
+          });
+      }),
+    ).then((entries) => entries.filter((e) => e !== null));
   }
 
   loadManifest()
