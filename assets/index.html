@@ -191,6 +191,46 @@
       border-radius: 8px;
     }
 
+    /* 選択期間に run がない source は下部グループへ移して 1 行に折りたたむ */
+    .inactive-sources { margin-top: 48px; }
+    .inactive-sources[hidden] { display: none; }
+    .inactive-note {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .inactive-sources section.source {
+      margin: 0;
+      padding: 8px 2px;
+      border-top: 1px solid var(--border);
+    }
+    .inactive-sources section.source + section.source {
+      /* section.source + section.source のフル表示用 padding を打ち消す */
+      padding-top: 8px;
+    }
+    .inactive-sources section.source:last-child {
+      border-bottom: 1px solid var(--border);
+    }
+    section.source.compact h2 {
+      display: inline;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    section.source.compact .source-meta,
+    section.source.compact .summary,
+    section.source.compact .stats,
+    section.source.compact h3,
+    section.source.compact .chart-wrap,
+    section.source.compact .meta { display: none; }
+    .compact-line { display: none; }
+    section.source.compact .compact-line {
+      display: inline;
+      margin-left: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     .global-controls {
       display: flex;
       flex-wrap: wrap;
@@ -281,6 +321,12 @@
 
   <div id="sources"></div>
 
+  <div class="inactive-sources" id="inactiveSources" hidden>
+    <h3 id="inactiveHeading"></h3>
+    <p class="inactive-note" data-i18n="inactiveNote">No runs in the selected range. Switch the range to "All time" to see their history.</p>
+    <div id="sourcesInactive"></div>
+  </div>
+
   <footer>
     Powered by <a href="https://github.com/hatsu38/ghtrack">ghtrack</a> ·
     Charts by <a href="https://www.chartjs.org/">Chart.js</a>
@@ -315,6 +361,7 @@
     totalBucketDay: "日毎 (中央値)",
     totalBucketWeek: "週ごと (中央値)",
     totalBucketMonth: "月ごと (中央値)",
+    inactiveNote: "選択した期間に run がない workflow です。期間を「全期間」にすると履歴を確認できます。",
   };
   function applyStaticI18n() {
     if (!LOCALE_JA) return;
@@ -1233,6 +1280,11 @@
     title.textContent = deriveSourceTitle(source);
     section.appendChild(title);
 
+    const compactLine = document.createElement("span");
+    compactLine.className = "compact-line";
+    compactLine.id = `compact-${idx}`;
+    section.appendChild(compactLine);
+
     const meta = document.createElement("p");
     meta.className = "source-meta";
     meta.id = sourceMetaId;
@@ -1297,6 +1349,8 @@
 
     return {
       source,
+      sectionEl: section,
+      compactLineId: compactLine.id,
       totalCanvasId,
       jobCanvasId,
       jobMetaId,
@@ -1446,6 +1500,8 @@
           dir: wf.dir,
           runs: wf.runs,
           totalRuns: wf.runs.length,
+          // index.json の runs から全期間の最終 run 日を得る ("YYYY/MM/DD" は辞書順で比較可)
+          lastRunDay: wf.runs.reduce((a, r) => (r.date > a ? r.date : a), "") || null,
           entries: [],
         };
         return renderSourceSection(source, i, container);
@@ -1460,8 +1516,34 @@
         const emptyMsg = hasFilter
           ? t("No runs in selected range.", "選択した期間に該当する run がありません。")
           : null;
+        const activeContainer = document.getElementById("sources");
+        const inactiveContainer = document.getElementById("sourcesInactive");
+        let inactiveCount = 0;
         for (const target of chartTargets) {
           const filtered = filterByRange(target.source.entries, range);
+
+          // 期間内に run が 1 件もない source はチャートを描かず、
+          // 下部の inactive グループへ 1 行表示で folding する。
+          // appendChild は元 node の移動なので、chartTargets の順序が保たれる。
+          if (filtered.length === 0) {
+            target.sectionEl.classList.add("compact");
+            const cl = document.getElementById(target.compactLineId);
+            if (cl) {
+              const totalRuns = target.source.totalRuns;
+              const last = target.source.lastRunDay;
+              cl.textContent = t(
+                `no runs in range · ${totalRuns} run(s) all-time` +
+                  (last ? ` · last run: ${last}` : ""),
+                `期間内 0 run · 全期間 ${totalRuns} run` +
+                  (last ? ` · 最終 run: ${last}` : ""));
+            }
+            inactiveContainer.appendChild(target.sectionEl);
+            inactiveCount++;
+            continue;
+          }
+
+          target.sectionEl.classList.remove("compact");
+          activeContainer.appendChild(target.sectionEl);
           renderSummary(filtered, target.summaryId, hasFilter);
           renderStats(filtered, target.statsId);
           buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
@@ -1469,6 +1551,15 @@
           buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
           const metaEl = document.getElementById(target.sourceMetaId);
           updateSourceMeta(target.source, metaEl);
+        }
+
+        const inactiveWrap = document.getElementById("inactiveSources");
+        const inactiveHeading = document.getElementById("inactiveHeading");
+        if (inactiveWrap) inactiveWrap.hidden = inactiveCount === 0;
+        if (inactiveHeading) {
+          inactiveHeading.textContent = t(
+            `No runs in selected range (${inactiveCount})`,
+            `選択した期間に run がない workflow (${inactiveCount})`);
         }
       };
 
