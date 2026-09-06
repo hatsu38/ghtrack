@@ -152,6 +152,18 @@ Charts rendered per workflow:
 - **Total duration per run**: a line chart of each run's `total_duration_sec`
 - **Per-job duration**: a line chart with one dataset per job name. matrix permutations (`name (N)` / `name (N, M)` form) are aggregated under the base name by default, and **max(matrix node duration)** is shown for each run (the bottleneck node that determines wall-clock under parallel execution). A checkbox above the chart lets you expand the matrix into individual nodes (the setting is persisted in `localStorage`).
 
+### Period comparison
+
+Check **Compare with previous period** (below the range controls) to see, for each workflow and job, how the median duration / run count / success rate changed against the immediately preceding period of the same length:
+
+- **Days per period** (default 7) sets N. The current period is `[now − N days, now)`; the previous period is the N days immediately before that, so the two never overlap and a boundary run is never double-counted.
+- The comparison periods are independent of the chart's own range selector — changing "Last 7 days" / "Last 30 days" etc. does not affect what gets compared.
+- Each workflow gets a table with 3 rows (median duration, run count, success rate) for the workflow overall, plus the same 3 rows for every job that appears in either period (a job present in only one period is still listed). Success rate uses the same success/failure classification as the summary badges — `cancelled` / `neutral` / unrecorded outcomes are excluded from the denominator.
+- Respects the **Aggregate matrix** setting: when on, matrix permutations are grouped per run and the group's duration is `max(job durations)`; counts are per run, not per matrix node.
+- Missing data renders as "—" instead of `NaN`/`Infinity`. When the previous period's value is 0, the absolute difference is still shown but the percentage change is "—".
+- The setting (on/off and days) is saved to `localStorage` and restored on reload.
+- On narrow screens the comparison table scrolls horizontally inside its own box instead of widening the page.
+
 Light / dark theming follows `prefers-color-scheme`. Layout is responsive with `viewport` meta + `max-width: 960px`.
 
 The dashboard UI defaults to English. When `navigator.language` starts with `ja`, labels and headings switch to Japanese automatically.
@@ -226,6 +238,7 @@ After step 4 the next ghtrack run will append in v2 mode without further changes
 ```bash
 pnpm install
 pnpm typecheck
+pnpm test    # runs tests/*.test.mjs via the built-in node:test runner
 pnpm build   # bundle into dist/ (committed to the repo)
 ```
 

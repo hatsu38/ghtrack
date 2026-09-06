@@ -152,6 +152,18 @@ Action は実行のたびに `gh-pages` branch の root に `index.html` を同�
 - **Total duration per run**: 各 run の `total_duration_sec` を点で並べた折れ線
 - **Per-job duration**: 各 job 名ごとに別 dataset を並べた折れ線。matrix permutation (`name (N)` / `name (N, M)` 形式) はデフォルトで base 名にまとめられ、各 run で **max(matrix node duration)** が表示される(並列実行で wall-clock を決める bottleneck node)。チャート上のチェックボックスで matrix を展開して個別 node 表示にも切り替え可能(設定は `localStorage` に保存される)
 
+### 期間比較
+
+期間コントロールの下にある「直前の同じ日数と比較」にチェックを入れると、workflow / job ごとに実行時間の中央値・実行回数・成功率が直前の同じ長さの期間からどれだけ変化したかを表で確認できる。
+
+- **比較する日数**(デフォルト 7)で N を指定する。直近期間は `[今 − N日, 今)`、前期間はその直前の N 日間で、両者は重ならないため境界の run が二重に数えられることはない。
+- 比較対象の期間は、グラフ側の期間セレクタ(「直近 7 日」「直近 30 日」など)とは独立している。グラフの期間を変えても比較結果には影響しない。
+- 各 workflow ごとに、Workflow 全体 + 両期間のいずれかに存在する job(片方の期間にしか無い job も含む)について、それぞれ 3 行(実行時間の中央値・実行回数・成功率)の表を表示する。成功率の判定は summary バッジと同じ基準(`cancelled`・`neutral`・結果未記録は分母から除外)。
+- 「matrix を集約」設定に連動する。オンの場合は matrix permutation を run ごとにグループ化し、グループの実行時間は `max(job の実行時間)`、件数も matrix node 単位ではなく run 単位で数える。
+- 欠測値は `NaN`/`Infinity` ではなく「—」と表示する。前期間の値が 0 の場合、絶対差は表示しつつ増減率は「—」にする。
+- 設定(有効・無効/日数)は `localStorage` に保存され、再読み込み後も復元される。
+- 画面幅が狭い場合、ページ全体ではなく比較表の領域内だけで横スクロールする。
+
 ライト/ダークは `prefers-color-scheme` で自動切り替え。viewport meta + max-width 960px のレスポンシブ。
 
 ### 公開手順
@@ -224,6 +236,7 @@ git push origin gh-pages
 ```bash
 pnpm install
 pnpm typecheck
+pnpm test    # tests/*.test.mjs を node:test (組み込み) で実行
 pnpm build   # dist/ にバンドル(commit 対象)
 ```
 
