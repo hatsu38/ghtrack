@@ -156,12 +156,13 @@ Charts rendered per workflow:
 
 Check **Compare with previous period** (below the range controls) to see, for each workflow and job, how the median duration / run count / success rate changed against the immediately preceding period of the same length:
 
-- **Days per period** (default 7) sets N. The current period is `[now − N days, now)`; the previous period is the N days immediately before that, so the two never overlap and a boundary run is never double-counted.
-- The comparison periods are independent of the chart's own range selector — changing "Last 7 days" / "Last 30 days" etc. does not affect what gets compared.
+- The number of days N is derived automatically from the selected range — 7 / 30 / 90 for the matching preset, or the span between the two custom dates for "Custom…". "All time" and an incomplete custom range have no fixed length, so comparison is unavailable then (the checkbox is disabled with an explanation) — there's nothing to configure by hand.
+- The comparison window itself is always anchored to now: current = `[now − N days, now)`, previous = the N days immediately before that, so the two never overlap and a boundary run is never double-counted. Only N follows the range selector — the window doesn't shift to match a custom range's own dates.
 - Each workflow gets a table with 3 rows (median duration, run count, success rate) for the workflow overall, plus the same 3 rows for every job that appears in either period (a job present in only one period is still listed). Success rate uses the same success/failure classification as the summary badges — `cancelled` / `neutral` / unrecorded outcomes are excluded from the denominator.
 - Respects the **Aggregate matrix** setting: when on, matrix permutations are grouped per run and the group's duration is `max(job durations)`; counts are per run, not per matrix node.
+- The difference column is colored — green when duration decreased or success rate increased, red the other way, and left uncolored when nothing changed or for the run-count row (more or fewer runs isn't inherently good or bad).
 - Missing data renders as "—" instead of `NaN`/`Infinity`. When the previous period's value is 0, the absolute difference is still shown but the percentage change is "—".
-- The setting (on/off and days) is saved to `localStorage` and restored on reload.
+- The on/off setting is saved to `localStorage` and restored on reload.
 - On narrow screens the comparison table scrolls horizontally inside its own box instead of widening the page.
 
 Light / dark theming follows `prefers-color-scheme`. Layout is responsive with `viewport` meta + `max-width: 960px`.

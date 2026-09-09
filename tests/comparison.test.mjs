@@ -8,7 +8,7 @@ const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 const context = vm.createContext({ location: { hostname: 'localhost', pathname: '/' } });
 // 起動時の通信を除き、実際に配信するスクリプトの関数を実行する。
 vm.runInContext(script.slice(0, script.lastIndexOf('  loadManifest()')) +
-  ';globalThis.api = { comparisonRanges: typeof comparisonRanges === "function" ? comparisonRanges : null, comparisonRows: typeof comparisonRows === "function" ? comparisonRows : null, comparisonDelta: typeof comparisonDelta === "function" ? comparisonDelta : null, filterByRange, runsInRange };})();', context);
+  ';globalThis.api = { comparisonRanges: typeof comparisonRanges === "function" ? comparisonRanges : null, comparisonRows: typeof comparisonRows === "function" ? comparisonRows : null, comparisonDelta: typeof comparisonDelta === "function" ? comparisonDelta : null, compareDaysForPreset: typeof compareDaysForPreset === "function" ? compareDaysForPreset : null, filterByRange, runsInRange };})();', context);
 const { api } = context;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const job = (name, duration, conclusion = 'success') => ({ name, duration_sec: duration, conclusion, steps: [] });
@@ -61,4 +61,17 @@ test('差分は current − previous、ゼロ基準と欠測の比率を捏造�
   assert.deepEqual(plain(api.comparisonDelta(100, 80)), { absolute: -20, percent: -20 });
   assert.deepEqual(plain(api.comparisonDelta(0, 10)), { absolute: 10, percent: null });
   assert.deepEqual(plain(api.comparisonDelta(null, 10)), { absolute: null, percent: null });
+});
+
+test('比較日数は期間セレクタから自動で決まり、全期間と不正な custom は比較不可にする', () => {
+  assert.equal(typeof api.compareDaysForPreset, 'function');
+  assert.equal(api.compareDaysForPreset('7d', '', ''), 7);
+  assert.equal(api.compareDaysForPreset('30d', '', ''), 30);
+  assert.equal(api.compareDaysForPreset('90d', '', ''), 90);
+  assert.equal(api.compareDaysForPreset('all', '', ''), null);
+  assert.equal(api.compareDaysForPreset('custom', '2026-08-01', '2026-08-07'), 7);
+  assert.equal(api.compareDaysForPreset('custom', '2026-08-01', '2026-08-01'), 1);
+  assert.equal(api.compareDaysForPreset('custom', '', '2026-08-07'), null);
+  assert.equal(api.compareDaysForPreset('custom', '2026-08-01', ''), null);
+  assert.equal(api.compareDaysForPreset('custom', '2026-08-07', '2026-08-01'), null);
 });
