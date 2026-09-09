@@ -363,15 +363,6 @@
     }
     .global-controls .custom-range[hidden] { display: none; }
 
-    .global-controls input[type="number"] {
-      font: inherit;
-      color: var(--fg);
-      background: var(--control);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 7px;
-      width: 80px;
-    }
     .comparison-table-wrap { overflow-x: auto; }
     .comparison-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .comparison-table th, .comparison-table td {
@@ -384,6 +375,8 @@
     .comparison-table th:first-child, .comparison-table td:first-child { text-align: left; }
     .comparison-table th { background: var(--control); }
     .comparison-table th[scope="rowgroup"] { max-width: 260px; white-space: normal; overflow-wrap: anywhere; }
+    .comparison-table td.delta-good { color: var(--success); font-weight: 600; }
+    .comparison-table td.delta-bad { color: var(--failure); font-weight: 600; }
     footer {
       margin-top: 48px;
       padding-top: 16px;
@@ -482,7 +475,6 @@
 
   <div class="global-controls">
     <label><input type="checkbox" id="compareToggle"><span data-i18n="compareLabel">Compare with previous period</span></label>
-    <label><span data-i18n="compareDays">Days per period:</span><input type="number" id="compareDays" min="1" step="1" value="7" required disabled></label>
     <span id="compareStatus" role="status" aria-live="polite"></span>
   </div>
 
@@ -515,7 +507,6 @@
 
   const I18N_JA = {
     compareLabel: "直前の同じ日数と比較",
-    compareDays: "比較する日数:",
     subtitle: "ghtrack で記録した workflow の実行時間トレンド。",
     aggregateMatrix: "matrix を集約 (max) して表示",
     breakdownLabel: "内訳:",
@@ -825,8 +816,8 @@
     element.appendChild(explanation);
     if (incomplete) {
       const warning = document.createElement("p");
-      warning.textContent = t("Some runs could not be loaded. Comparison is unavailable; change the days to retry.",
-        "一部の run を読み込めなかったため比較できません。日数を変更すると再試行します。");
+      warning.textContent = t("Some runs could not be loaded, so the comparison can't be shown.",
+        "一部の run を読み込めなかったため比較を表示できません。");
       element.appendChild(warning);
       return;
     }
@@ -846,6 +837,12 @@
     }
     const body = table.createTBody();
     const signed = value => value === null ? "—" : `${value > 0 ? "+" : ""}${Number(value.toFixed(1))}`;
+    // count は増減に良し悪しがないため常に無色。duration は減少が改善、rate は増加が改善。
+    const deltaClass = (key, absolute) => {
+      if (absolute === null || absolute === 0 || key === "count") return "";
+      const improved = key === "duration" ? absolute < 0 : absolute > 0;
+      return improved ? "delta-good" : "delta-bad";
+    };
     const metrics = [
       { key: "duration", label: t("Median duration", "実行時間の中央値"), unit: "s" },
       { key: "count", label: t("Runs", "実行回数"), unit: "" },
@@ -868,6 +865,7 @@
         }
         const delta = comparisonDelta(row.previous[metric.key], row.current[metric.key]);
         const cell = tr.insertCell();
+        cell.className = deltaClass(metric.key, delta.absolute);
         cell.textContent = delta.absolute === null ? "—" : metric.key === "rate"
           ? `${signed(delta.absolute)} pt`
           : `${signed(delta.absolute)}${metric.unit} (${signed(delta.percent)}%)`;
@@ -896,6 +894,31 @@
       };
     }
     return { from: null, to: null };
+  }
+
+  // 選択中の期間から比較に使う日数を導く。「全期間」や未設定・不正な custom 期間は
+  // 比較対象の長さが定まらないため null(比較不可)を返す。
+  function compareDaysForPreset(preset, customFrom, customTo) {
+    if (preset === "7d") return 7;
+    if (preset === "30d") return 30;
+    if (preset === "90d") return 90;
+    if (preset === "custom") {
+      if (!customFrom || !customTo) return null;
+      const fromMs = new Date(customFrom + "T00:00:00").getTime();
+      const toExclusiveMs = new Date(customTo + "T00:00:00").getTime() + DAY_MS;
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toExclusiveMs)) return null;
+      const days = Math.round((toExclusiveMs - fromMs) / DAY_MS);
+      return days >= 1 ? days : null;
+    }
+    return null;
+  }
+
+  function activeCompareDays() {
+    return compareDaysForPreset(
+      lsGet(RANGE_PRESET_KEY, "30d"),
+      lsGet(RANGE_FROM_KEY, ""),
+      lsGet(RANGE_TO_KEY, ""),
+    );
   }
 
   function filterByRange(entries, range) {
@@ -1885,12 +1908,8 @@
       let activeRange = getActiveRange();
       let loadVersion = 0;
       const compareToggle = document.getElementById("compareToggle");
-      const compareDays = document.getElementById("compareDays");
       const compareStatus = document.getElementById("compareStatus");
       compareToggle.checked = lsGet("ghtrack:compare", "false") === "true";
-      const savedDays = Number(lsGet("ghtrack:compareDays", "7"));
-      compareDays.value = comparisonRanges(savedDays, Date.now()) ? savedDays : 7;
-      compareDays.disabled = !compareToggle.checked;
 
       const renderAllCharts = () => {
         const groupMatrix = getMatrixGrouping();
@@ -1953,8 +1972,16 @@
       const reloadAndRender = async () => {
         const version = ++loadVersion;
         const range = getActiveRange();
-        const ranges = compareToggle.checked ? comparisonRanges(Number(compareDays.value), Date.now()) : null;
-        compareStatus.textContent = ranges ? t("Loading comparison…", "比較データを読み込み中…") : "";
+        // 比較の日数は期間セレクタから自動で決まる。「全期間」や未設定/不正な
+        // custom 期間では比較対象の長さが定まらないため、チェックボックス自体を
+        // 触れなくする(保存済みの有効・無効設定は変更しない)。
+        const days = activeCompareDays();
+        compareToggle.disabled = days === null;
+        const ranges = compareToggle.checked && days !== null ? comparisonRanges(days, Date.now()) : null;
+        compareStatus.textContent = !compareToggle.checked ? ""
+          : days === null ? t("Comparison isn't available for \"All time\" or an incomplete custom range.",
+              "「全期間」または未設定のカスタム期間では比較できません。")
+          : t("Loading comparison…", "比較データを読み込み中…");
         activeComparison = null;
         for (const target of chartTargets) target.comparison.hidden = true;
         const fetchRange = ranges ? {
@@ -1974,32 +2001,12 @@
         });
         activeRange = range;
         activeComparison = ranges;
-        compareStatus.textContent = "";
+        if (ranges) compareStatus.textContent = "";
         renderAllCharts();
       };
 
-      // 無効なら compareStatus にメッセージを出し、比較表示を消して false を返す。
-      // チェックボックス再オン時にも同じ日数値が使われるため、input ハンドラと共有する。
-      const validateCompareDays = () => {
-        const valid = comparisonRanges(Number(compareDays.value), Date.now()) !== null;
-        compareDays.setCustomValidity(valid ? "" : t("Enter a positive whole number of days.", "日数を正の整数で入力してください。"));
-        if (!valid) {
-          ++loadVersion;
-          activeComparison = null;
-          for (const target of chartTargets) target.comparison.hidden = true;
-          compareStatus.textContent = compareDays.validationMessage;
-        }
-        return valid;
-      };
       compareToggle.addEventListener("change", () => {
-        compareDays.disabled = !compareToggle.checked;
         lsSet("ghtrack:compare", String(compareToggle.checked));
-        if (compareToggle.checked && !validateCompareDays()) return;
-        reloadAndRender();
-      });
-      compareDays.addEventListener("input", () => {
-        if (!validateCompareDays()) return;
-        lsSet("ghtrack:compareDays", compareDays.value);
         reloadAndRender();
       });
 
