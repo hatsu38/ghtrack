@@ -152,18 +152,21 @@ Charts rendered per workflow:
 - **Total duration per run**: a line chart of each run's `total_duration_sec`
 - **Per-job duration**: a line chart with one dataset per job name. matrix permutations (`name (N)` / `name (N, M)` form) are aggregated under the base name by default, and **max(matrix node duration)** is shown for each run (the bottleneck node that determines wall-clock under parallel execution). A checkbox above the chart lets you expand the matrix into individual nodes (the setting is persisted in `localStorage`).
 
+The matrix switch is beside the Job chart, while aggregation and Jobs / Steps switches are beside each chart; the settings stay synchronized across workflows.
+
 ### Period comparison
 
-Check **Compare with previous period** (below the range controls) to see, for each workflow and job, how the median duration / run count / success rate changed against the immediately preceding period of the same length:
+Check **Compare with previous period** (below the range controls) to see workflow-level median duration, success rate, and run count in three cards, plus one row per job with a switchable metric:
 
 - The number of days N is derived automatically from the selected range — 7 / 30 / 90 for the matching preset, or the span between the two custom dates for "Custom…". "All time" and an incomplete custom range have no fixed length, so comparison is unavailable then (the checkbox is disabled with an explanation) — there's nothing to configure by hand.
-- The comparison window itself is always anchored to now: current = `[now − N days, now)`, previous = the N days immediately before that, so the two never overlap and a boundary run is never double-counted. Only N follows the range selector — the window doesn't shift to match a custom range's own dates.
-- Each workflow gets a table with 3 rows (median duration, run count, success rate) for the workflow overall, plus the same 3 rows for every job that appears in either period (a job present in only one period is still listed). Success rate uses the same success/failure classification as the summary badges — `cancelled` / `neutral` / unrecorded outcomes are excluded from the denominator.
+- Presets use the last N days as the current period. A custom range uses the selected dates themselves as current, with the immediately preceding period of the same length as previous. The periods never overlap, so boundary runs are counted once.
+- The workflow success-rate card includes its success/failure breakdown. The job table switches between median duration, success rate, and run count, and includes jobs present in only one period. `cancelled`, `neutral`, and unrecorded outcomes are excluded from the success-rate denominator.
+- Expand a job row to inspect the other metrics and run counts. The initial order is the largest duration increase first, with missing values last.
 - Respects the **Aggregate matrix** setting: when on, matrix permutations are grouped per run and the group's duration is `max(job durations)`; counts are per run, not per matrix node.
 - The difference column is colored — green when duration decreased or success rate increased, red the other way, and left uncolored when nothing changed or for the run-count row (more or fewer runs isn't inherently good or bad).
-- Missing data renders as "—" instead of `NaN`/`Infinity`. When the previous period's value is 0, the absolute difference is still shown but the percentage change is "—".
+- Missing data renders as "—" instead of `NaN`/`Infinity`. When the previous period's value is 0, the absolute difference is still shown but the percentage change is "—" (run counts say "no runs in previous period").
 - The on/off setting is saved to `localStorage` and restored on reload.
-- On narrow screens the comparison table scrolls horizontally inside its own box instead of widening the page.
+- On narrow screens current values and changes remain prominent, while previous values stay as supporting details; the comparison table scrolls inside its own box.
 
 Light / dark theming follows `prefers-color-scheme`. Layout is responsive with `viewport` meta + `max-width: 960px`.
 
