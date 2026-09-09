@@ -152,6 +152,22 @@ Action は実行のたびに `gh-pages` branch の root に `index.html` を同�
 - **Total duration per run**: 各 run の `total_duration_sec` を点で並べた折れ線
 - **Per-job duration**: 各 job 名ごとに別 dataset を並べた折れ線。matrix permutation (`name (N)` / `name (N, M)` 形式) はデフォルトで base 名にまとめられ、各 run で **max(matrix node duration)** が表示される(並列実行で wall-clock を決める bottleneck node)。チャート上のチェックボックスで matrix を展開して個別 node 表示にも切り替え可能(設定は `localStorage` に保存される)
 
+matrix の切替は Job グラフ付近、集計単位と Jobs / Steps の切替は各グラフ付近に配置され、workflow 間で設定が同期される。
+
+### 期間比較
+
+期間コントロールの下にある「直前の同じ日数と比較」にチェックを入れると、workflow 全体を中央値・成功率・実行回数の3カードで、Job を1行ごとの指標切替表で確認できる。
+
+- 比較する日数 N は、選択中の期間から自動で決まる。プリセットなら 7 / 30 / 90、「カスタム…」なら2つの日付の日数差。「全期間」や未設定・不正なカスタム期間には決まった長さがないため比較不可(チェックボックスが理由付きで無効化される)。手動で入力する項目はない。
+- プリセットは直近 N 日を現在期間とし、カスタムは選択した日付範囲そのものを現在期間、前期間はその直前の同じ長さとする。両者は重ならないため境界の run が二重に数えられることはない。
+- Workflow カードの成功率には成功・失敗の内訳を表示する。Job 表は所要時間・成功率・実行回数を切り替えられ、片方の期間にしか無い Job も含む。成功率は `cancelled`・`neutral`・結果未記録を分母から除外する。
+- Job 行を展開すると、切替中ではない残りの指標と実行件数を確認できる。初期表示は所要時間の増加が大きい順で、欠測は最後に並ぶ。
+- 「matrix を集約」設定に連動する。オンの場合は matrix permutation を run ごとにグループ化し、グループの実行時間は `max(job の実行時間)`、件数も matrix node 単位ではなく run 単位で数える。
+- 差分列は色分けされる。実行時間は減少で緑・増加で赤、成功率は増加で緑・減少で赤。変化なしと実行回数の行は無色のまま(実行回数の増減自体には良し悪しがないため)。
+- 欠測値は `NaN`/`Infinity` ではなく「—」と表示する。前期間の値が 0 の場合、絶対差は表示しつつ増減率は「—」にする（実行回数は「前期間は実行なし」と表示）。
+- 有効・無効の設定は `localStorage` に保存され、再読み込み後も復元される。
+- 直近値と差分を優先し、前期間値は補足として表示する。画面幅が狭い場合も比較表の領域内だけで横スクロールする。
+
 ライト/ダークは `prefers-color-scheme` で自動切り替え。viewport meta + max-width 960px のレスポンシブ。
 
 ### 公開手順
@@ -224,6 +240,7 @@ git push origin gh-pages
 ```bash
 pnpm install
 pnpm typecheck
+pnpm test    # tests/*.test.mjs を node:test (組み込み) で実行
 pnpm build   # dist/ にバンドル(commit 対象)
 ```
 

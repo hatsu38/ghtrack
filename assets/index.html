@@ -7,21 +7,33 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #ffffff;
-      --fg: #1f2328;
-      --muted: #57606a;
-      --border: #d0d7de;
-      --accent: #1f6feb;
-      --card: #f6f8fa;
+      --bg: #f4f6f8;
+      --fg: #172033;
+      --muted: #667085;
+      --border: #d9e0e8;
+      --border-strong: #c3ccd8;
+      --accent: #0969da;
+      --success: #1a7f37;
+      --failure: #cf222e;
+      --surface: #ffffff;
+      --surface-muted: #f8fafc;
+      --control: #ffffff;
+      --shadow: 0 16px 44px rgba(23, 32, 51, 0.08);
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #0d1117;
-        --fg: #e6edf3;
-        --muted: #8b949e;
-        --border: #30363d;
+        --bg: #101419;
+        --fg: #edf2f7;
+        --muted: #a4adba;
+        --border: #303844;
+        --border-strong: #495363;
         --accent: #58a6ff;
-        --card: #161b22;
+        --success: #56d364;
+        --failure: #ff7b72;
+        --surface: #161b22;
+        --surface-muted: #1c232d;
+        --control: #111820;
+        --shadow: 0 18px 52px rgba(0, 0, 0, 0.34);
       }
     }
 
@@ -29,50 +41,114 @@
 
     body {
       margin: 0;
-      padding: 24px;
+      min-height: 100vh;
+      padding: 32px 20px;
       background: var(--bg);
       color: var(--fg);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
       line-height: 1.5;
+      text-rendering: optimizeLegibility;
     }
 
-    main { max-width: 960px; margin: 0 auto; }
+    main { max-width: 1180px; margin: 0 auto; }
 
     header {
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 16px;
-      margin-bottom: 24px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
     }
 
-    h1 { margin: 0 0 4px; font-size: 28px; font-weight: 600; }
-    h1 a { color: inherit; text-decoration: none; }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 34px;
+      font-weight: 720;
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+    h1 a {
+      color: inherit;
+      text-decoration: none;
+      text-underline-offset: 5px;
+    }
+    h1 a:hover { color: var(--accent); text-decoration: underline; }
 
-    .subtitle { color: var(--muted); font-size: 14px; margin: 0; }
+    .subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0;
+      max-width: 560px;
+    }
 
-    section.source { margin-bottom: 48px; }
+    section.source {
+      margin: 0 0 36px;
+      padding: 28px 0 0;
+      border-top: 1px solid var(--border);
+    }
     section.source + section.source {
       border-top: 1px solid var(--border);
-      padding-top: 32px;
+      padding-top: 34px;
     }
 
-    h2 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
-    h3 {
-      margin: 24px 0 10px;
-      font-size: 13px;
+    .source-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px 20px;
+      align-items: start;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .actions-link {
+      margin-left: 10px;
+      font-size: 12px;
       font-weight: 600;
       color: var(--muted);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 9px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .actions-link:hover {
+      color: var(--fg);
+      border-color: var(--muted);
+    }
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
     }
 
-    .source-meta { color: var(--muted); font-size: 13px; margin: 0; }
+    .source-meta {
+      justify-self: end;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 0;
+      padding: 5px 9px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      white-space: nowrap;
+    }
 
     .summary {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 8px;
-      margin: 10px 0 0;
+      margin: 0 0 14px;
       font-size: 13px;
       color: var(--muted);
     }
@@ -80,44 +156,42 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 2px 8px;
+      min-height: 24px;
+      padding: 3px 9px;
       border-radius: 999px;
       font-weight: 600;
       font-size: 12px;
       border: 1px solid transparent;
     }
     .summary .badge.success {
-      background: rgba(63, 185, 80, 0.16);
-      color: #1a7f37;
+      background: rgba(63, 185, 80, 0.14);
+      color: var(--success);
       border-color: rgba(63, 185, 80, 0.35);
     }
     .summary .badge.failure {
       background: rgba(207, 34, 46, 0.16);
-      color: #cf222e;
+      color: var(--failure);
       border-color: rgba(207, 34, 46, 0.35);
     }
     .summary .badge.neutral {
-      background: var(--card);
+      background: var(--surface-muted);
       color: var(--muted);
       border-color: var(--border);
     }
     .summary .rate { font-weight: 600; color: var(--fg); }
-    @media (prefers-color-scheme: dark) {
-      .summary .badge.success { color: #56d364; }
-      .summary .badge.failure { color: #ff7b72; }
-    }
 
     .stats {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
       gap: 12px;
-      margin: 14px 0 0;
+      margin: 0 0 2px;
     }
     .stat-card {
-      background: var(--card);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 12px 14px;
+      padding: 14px 16px;
+      box-shadow: 0 1px 0 rgba(23, 32, 51, 0.03);
     }
     .stat-card .stat-label {
       display: flex;
@@ -142,10 +216,10 @@
       z-index: 10;
       width: 270px;
       padding: 10px 12px;
-      background: var(--bg);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+      box-shadow: var(--shadow);
       font-weight: 400;
       font-size: 12px;
       line-height: 1.5;
@@ -156,9 +230,10 @@
     .stat-help:hover .stat-tip,
     .stat-help:focus .stat-tip { display: block; }
     .stat-card .stat-value {
-      font-size: 22px;
-      font-weight: 600;
-      margin-top: 2px;
+      font-size: 25px;
+      font-weight: 720;
+      margin-top: 4px;
+      line-height: 1.2;
     }
     .stat-card .stat-note {
       font-size: 11px;
@@ -168,11 +243,12 @@
 
     .chart-wrap {
       position: relative;
-      height: 300px;
-      background: var(--card);
+      height: 330px;
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 12px;
+      padding: 14px;
+      box-shadow: 0 1px 0 rgba(23, 32, 51, 0.03);
     }
 
     .meta {
@@ -186,7 +262,7 @@
       text-align: center;
       color: var(--muted);
       font-size: 14px;
-      background: var(--card);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
     }
@@ -218,6 +294,7 @@
       color: var(--muted);
     }
     section.source.compact .source-meta,
+    section.source.compact .data-info,
     section.source.compact .summary,
     section.source.compact .stats,
     section.source.compact h3,
@@ -230,13 +307,20 @@
       color: var(--muted);
       font-size: 12px;
     }
+    section.source.comparison-enabled > .summary,
+    section.source.comparison-enabled > .stats { display: none; }
 
     .global-controls {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 8px 20px;
-      margin: 0 0 24px;
+      gap: 10px 12px;
+      margin: 0 0 8px;
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
       color: var(--muted);
       font-size: 13px;
     }
@@ -244,18 +328,36 @@
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
+      min-height: 34px;
       user-select: none;
     }
-    .global-controls input[type="checkbox"] { cursor: pointer; }
+    .global-controls input[type="checkbox"] {
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
     .global-controls select,
     .global-controls input[type="date"] {
       font: inherit;
-      color: inherit;
-      background: var(--card);
+      color: var(--fg);
+      background: var(--control);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 3px 6px;
+      min-height: 34px;
+      padding: 5px 9px;
+    }
+    .global-controls select:hover,
+    .global-controls input[type="date"]:hover {
+      border-color: var(--border-strong);
+    }
+    .global-controls select:focus,
+    .global-controls input[type="date"]:focus,
+    .global-controls input[type="checkbox"]:focus-visible,
+    h1 a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
     .global-controls .custom-range {
       display: inline-flex;
@@ -263,7 +365,59 @@
       gap: 6px;
     }
     .global-controls .custom-range[hidden] { display: none; }
+    .global-controls > .moved-control { display: none; }
+    .compare-period-global { width: 100%; color: var(--fg); font-size: 12px; }
 
+    .comparison-table-wrap { overflow-x: auto; }
+    .comparison-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .comparison-table th, .comparison-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .comparison-table th:first-child, .comparison-table td:first-child { text-align: left; }
+    .comparison-table th { background: var(--control); }
+    .comparison-table th[scope="rowgroup"] { max-width: 260px; white-space: normal; overflow-wrap: anywhere; }
+    .comparison-table .job-name { text-align: left; font-weight: 600; }
+    .job-detail { color: var(--muted); font-size: 11px; margin-top: 4px; white-space: normal; overflow-wrap: anywhere; }
+    .comparison-table td.delta-good { color: var(--success); font-weight: 600; }
+    .comparison-table td.delta-bad { color: var(--failure); font-weight: 600; }
+    .comparison-cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0 18px;
+    }
+    .comparison-card {
+      padding: 13px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .comparison-card-label, .comparison-card-detail, .comparison-breakdown { color: var(--muted); font-size: 12px; }
+    .comparison-card-current { font-size: 24px; font-weight: 720; margin: 3px 0; }
+    .comparison-card-detail .delta-good { color: var(--success); }
+    .comparison-card-detail .delta-bad { color: var(--failure); }
+    .comparison-breakdown { margin-top: 7px; }
+    .comparison-help { color: var(--muted); font-size: 12px; margin: 10px 0; }
+    .comparison-help summary { cursor: pointer; color: var(--fg); font-weight: 600; }
+    .comparison-help p { margin: 5px 0; }
+    section.source.comparison-only .chart-heading,
+    section.source.comparison-only .chart-wrap,
+    section.source.comparison-only .chart-meta,
+    section.source.compact .chart-controls,
+    section.source.comparison-only .chart-controls { display: none; }
+    .comparison-job-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
+    .comparison-job-heading h4 { margin: 0 0 8px; font-size: 13px; }
+    .comparison-job-heading select { font: inherit; color: var(--fg); background: var(--control); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+    .chart-controls { display: flex; gap: 10px; flex-wrap: wrap; margin: 18px 0 4px; color: var(--muted); font-size: 12px; }
+    .chart-controls label, .matrix-control { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-controls select { font: inherit; color: var(--fg); background: var(--control); border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; }
+    .matrix-control { float: right; margin-left: 10px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; }
+    .aggregation-help { color: var(--muted); font-size: 12px; margin: 4px 0 0; width: 100%; }
+    .aggregation-help summary { cursor: pointer; color: var(--fg); }
     footer {
       margin-top: 48px;
       padding-top: 16px;
@@ -272,6 +426,60 @@
       font-size: 13px;
     }
     footer a { color: var(--accent); text-decoration: none; }
+
+    @media (max-width: 720px) {
+      body { padding: 20px 12px; }
+      header {
+        display: block;
+        margin-bottom: 14px;
+      }
+      h1 { font-size: 30px; }
+      .global-controls {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .global-controls label,
+      .global-controls .custom-range {
+        width: 100%;
+      }
+      .global-controls label:has(select),
+      .global-controls .custom-range {
+        justify-content: space-between;
+      }
+      .global-controls select,
+      .global-controls input[type="date"] {
+        max-width: 58%;
+      }
+      .source-heading {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .source-meta {
+        justify-self: start;
+        white-space: normal;
+        border-radius: 8px;
+      }
+      .chart-wrap { height: 300px; padding: 10px; }
+      .stat-tip {
+        left: auto;
+        right: -8px;
+        width: min(270px, calc(100vw - 40px));
+      }
+      .comparison-cards { grid-template-columns: 1fr; }
+      .comparison-card-detail { font-size: 12px; }
+      .comparison-job-heading { display: grid; grid-template-columns: 1fr; align-items: start; gap: 6px; }
+      .comparison-job-heading h4 { white-space: nowrap; margin-bottom: 0; }
+      .comparison-job-heading .matrix-control { float: none; margin-left: 0; justify-self: start; }
+      .comparison-job-heading > select { justify-self: start; max-width: 100%; }
+      .job-comparison-table { width: 100%; table-layout: fixed; }
+      .job-comparison-table th:nth-child(1), .job-comparison-table td:nth-child(1) { width: 48%; }
+      .job-comparison-table th:nth-child(3), .job-comparison-table td:nth-child(3) { width: 27%; }
+      .job-comparison-table th:nth-child(4), .job-comparison-table td:nth-child(4) { width: 25%; }
+      .job-comparison-table td { white-space: normal; overflow-wrap: anywhere; }
+      .job-comparison-table th:nth-child(2), .job-comparison-table td:nth-child(2) { display: none; }
+      .job-comparison-table td:nth-child(3)::after { content: "前期間: " attr(data-previous); display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+    }
   </style>
 </head>
 <body>
@@ -282,18 +490,18 @@
   </header>
 
   <div class="global-controls">
-    <label>
+    <label class="moved-control">
       <input type="checkbox" id="groupMatrixToggle">
       <span data-i18n="aggregateMatrix">Aggregate matrix (max)</span>
     </label>
-    <label>
+    <label class="moved-control">
       <span data-i18n="breakdownLabel">Breakdown:</span>
       <select id="breakdownLevel">
         <option value="jobs">Jobs</option>
         <option value="steps">Steps</option>
       </select>
     </label>
-    <label>
+    <label class="moved-control">
       <span data-i18n="totalBucketLabel">Aggregation:</span>
       <select id="totalBucket">
         <option value="run" data-i18n="totalBucketRun">Per run</option>
@@ -317,6 +525,14 @@
       <span>–</span>
       <input type="date" id="rangeTo" aria-label="to">
     </span>
+    <label><input type="checkbox" id="compareToggle"><span data-i18n="compareLabel">Compare with previous period</span></label>
+    <span id="compareStatus" role="status" aria-live="polite"></span>
+    <span id="comparePeriod" class="compare-period-global" hidden></span>
+    <details id="comparePeriodDetails" class="aggregation-help" hidden></details>
+    <details class="aggregation-help">
+      <summary data-i18n="aggregationHelpSummary">How the dashboard aggregates data</summary>
+      <span data-i18n="aggregationHelpBody">Charts use the selected range and aggregation unit. Median values summarize runs; Jobs / Steps controls affect the breakdown chart. Matrix aggregation uses the maximum node duration.</span>
+    </details>
   </div>
 
   <div id="sources"></div>
@@ -347,6 +563,7 @@
   }
 
   const I18N_JA = {
+    compareLabel: "直前の同じ日数と比較",
     subtitle: "ghtrack で記録した workflow の実行時間トレンド。",
     aggregateMatrix: "matrix を集約 (max) して表示",
     breakdownLabel: "内訳:",
@@ -362,6 +579,8 @@
     totalBucketWeek: "週ごと (中央値)",
     totalBucketMonth: "月ごと (中央値)",
     inactiveNote: "選択した期間に run がない workflow です。期間を「全期間」にすると履歴を確認できます。",
+    aggregationHelpSummary: "集計方法",
+    aggregationHelpBody: "グラフは選択期間と集計単位で集計します。中央値は run 単位の値を要約し、Jobs / Steps は内訳グラフに適用します。matrix は最大ノード時間を使います。",
   };
   function applyStaticI18n() {
     if (!LOCALE_JA) return;
@@ -430,6 +649,28 @@
   // net::ERR_INSUFFICIENT_RESOURCES で一部の fetch が失敗し、その run が黙って欠落する。
   const FETCH_CONCURRENCY = 12;
   const OTHER_COLOR = "#8b949e";
+
+  // GitHub Pages の project site (https://{owner}.github.io/{repo}/...) を前提に
+  // owner/repo を推測する。カスタムドメイン・user/org site・ローカル確認時は
+  // 判定できないため null を返し、呼び出し側で Actions へのリンクを出さない。
+  function detectRepoFromLocation() {
+    const hostMatch = /^([^.]+)\.github\.io$/.exec(location.hostname);
+    if (!hostMatch) return null;
+    const repo = location.pathname.split("/").filter(Boolean)[0];
+    if (!repo) return null;
+    return { owner: hostMatch[1], repo };
+  }
+
+  const REPO_INFO = detectRepoFromLocation();
+
+  function buildActionsUrl(workflowFile) {
+    if (!REPO_INFO || !workflowFile) return null;
+    return `https://github.com/${REPO_INFO.owner}/${REPO_INFO.repo}/actions/workflows/${encodeURIComponent(workflowFile)}`;
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
 
   function getBreakdownLevel() {
     const v = lsGet(BREAKDOWN_LEVEL_KEY, "jobs");
@@ -552,6 +793,259 @@
     } catch (_) { /* ignore */ }
   }
 
+  // ミリ秒の閉区間を使い、境界の run は直近側だけに含める。1 日 = 24 時間。
+  function comparisonRanges(days, now) {
+    if (!Number.isSafeInteger(days) || days < 1 || !Number.isFinite(now)) return null;
+    const start = now - 2 * days * DAY_MS;
+    if (!Number.isFinite(new Date(start).getTime())) return null;
+    const boundary = now - days * DAY_MS;
+    return {
+      previous: { from: start, to: boundary - 1 },
+      current: { from: boundary, to: now - 1 },
+    };
+  }
+
+  function comparisonMetrics(entries) {
+    const durations = entries.map(totalDurationSec).filter(Number.isFinite);
+    const { success, failure } = summarizeRuns(entries);
+    return {
+      duration: durations.length ? median(durations) : null,
+      count: entries.length,
+      rate: success + failure ? success / (success + failure) * 100 : null,
+    };
+  }
+
+  function comparisonJobEntries(entries, groupMatrix) {
+    const groups = new Map();
+    for (const entry of entries) {
+      const perRun = new Map();
+      for (const job of entry.jobs) {
+        const name = groupKeyFor(job.name, groupMatrix);
+        if (!perRun.has(name)) perRun.set(name, []);
+        perRun.get(name).push(job);
+      }
+      for (const [name, jobs] of perRun) {
+        if (!groups.has(name)) groups.set(name, []);
+        const durations = jobs.map(job => job.duration_sec).filter(Number.isFinite);
+        groups.get(name).push({
+          jobs,
+          total_duration_sec: durations.length ? Math.max(...durations) : null,
+        });
+      }
+    }
+    return groups;
+  }
+
+  // Job は 1 run 内に複数の matrix node があっても 1 件として数える。
+  function comparisonJobRows(previous, current, groupMatrix) {
+    const before = comparisonJobEntries(previous, groupMatrix);
+    const after = comparisonJobEntries(current, groupMatrix);
+    return [...new Set([...before.keys(), ...after.keys()])].sort().map(name => ({
+      name,
+      previous: comparisonMetrics(before.get(name) || []),
+      current: comparisonMetrics(after.get(name) || []),
+    }));
+  }
+
+  function comparisonRows(previous, current, groupMatrix) {
+    const before = comparisonJobEntries(previous, groupMatrix);
+    const after = comparisonJobEntries(current, groupMatrix);
+    return [
+      { name: t("Workflow", "Workflow 全体"), previous: comparisonMetrics(previous), current: comparisonMetrics(current) },
+      ...[...new Set([...before.keys(), ...after.keys()])].sort().map(name => ({
+        name,
+        previous: comparisonMetrics(before.get(name) || []),
+        current: comparisonMetrics(after.get(name) || []),
+      })),
+    ];
+  }
+
+  function comparisonRangesForSelection(preset, customFrom, customTo, now) {
+    if (preset !== "custom") {
+      const days = compareDaysForPreset(preset, customFrom, customTo);
+      return days === null ? null : comparisonRanges(days, now);
+    }
+    if (!customFrom || !customTo) return null;
+    const parseLocalDate = (value) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime() : NaN;
+    };
+    const from = parseLocalDate(customFrom);
+    const to = parseLocalDate(customTo) + DAY_MS - 1;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return null;
+    const days = Math.round((to - from + 1) / DAY_MS);
+    return {
+      previous: { from: from - days * DAY_MS, to: from - 1 },
+      current: { from, to },
+    };
+  }
+
+  function comparisonRunsIncomplete(runs, ranges, cachedKeys, trackName) {
+    if (!ranges || !Array.isArray(runs) || !cachedKeys || typeof cachedKeys.has !== "function") return false;
+    const from = ranges.previous.from;
+    const to = ranges.current.to;
+    return runsInRange(runs, { from, to }).some((run) =>
+      !cachedKeys.has(`${trackName}|${run.run_id}|${run.run_attempt}`));
+  }
+
+  function comparisonDelta(previous, current) {
+    if (!Number.isFinite(previous) || !Number.isFinite(current)) return { absolute: null, percent: null };
+    return { absolute: current - previous, percent: previous === 0 ? null : (current - previous) / previous * 100 };
+  }
+
+  function renderComparison(entries, element, ranges, groupMatrix, incomplete) {
+    element.replaceChildren();
+    element.hidden = !ranges;
+    if (!ranges) return;
+    const heading = document.createElement("h3");
+    heading.textContent = t("Period comparison", "期間比較");
+    element.appendChild(heading);
+    const before = filterByRange(entries, ranges.previous);
+    const after = filterByRange(entries, ranges.current);
+    const selectedPeriod = lsGet(RANGE_PRESET_KEY, "30d") === "custom";
+    if (incomplete) {
+      const warning = document.createElement("p");
+      warning.className = "meta comparison-warning";
+      warning.textContent = t(
+        "Some runs in the comparison period could not be loaded, so comparison values are hidden.",
+        "比較対象期間の run を一部取得できないため、比較値を非表示にしています。");
+      element.appendChild(warning);
+      return;
+    }
+    const rows = comparisonRows(before, after, groupMatrix);
+    const workflow = rows[0];
+    const signed = value => value === null ? "—" : `${value > 0 ? "+" : ""}${Number(value.toFixed(1))}`;
+    const valueText = (key, value) => value === null ? "—" : key === "rate" ? `${Number(value.toFixed(1))}%` : key === "duration" ? `${formatDuration(value)}` : `${value}`;
+    const deltaText = (key, delta) => {
+      if (delta.absolute === null) return "—";
+      if (delta.absolute === 0) return t("No change", "変化なし");
+      if (key === "rate") return `${signed(delta.absolute)} pt`;
+      const pct = delta.percent === null ? "" : ` (${signed(delta.percent)}%)`;
+      if (key === "count" && delta.absolute > 0 && delta.percent === null) {
+        return `${signed(delta.absolute)}${t(" runs", "回")} · ${t("no runs in previous period", "前期間は実行なし")}`;
+      }
+      return `${signed(delta.absolute)}${key === "duration" ? "s" : t(" runs", "回")}${pct}`;
+    };
+    const deltaClass = (key, absolute) => {
+      if (absolute === null || absolute === 0 || key === "count") return "";
+      return (key === "duration" ? absolute < 0 : absolute > 0) ? "delta-good" : "delta-bad";
+    };
+    const metrics = [
+      { key: "duration", label: t("Median duration", "所要時間の中央値") },
+      { key: "rate", label: t("Success rate", "成功率") },
+      { key: "count", label: t("Runs", "実行回数") },
+    ];
+    const cards = document.createElement("div");
+    cards.className = "comparison-cards";
+    for (const metric of metrics) {
+      const card = document.createElement("div");
+      card.className = "comparison-card";
+      const d = comparisonDelta(workflow.previous[metric.key], workflow.current[metric.key]);
+      card.innerHTML = `<div class="comparison-card-label"></div><div class="comparison-card-current"></div><div class="comparison-card-detail"></div>`;
+      card.querySelector(".comparison-card-label").textContent = metric.label;
+      card.querySelector(".comparison-card-current").textContent = valueText(metric.key, workflow.current[metric.key]);
+      const detail = card.querySelector(".comparison-card-detail");
+      const previousText = document.createElement("span");
+      previousText.textContent = `${t("previous", "前期間")} ${valueText(metric.key, workflow.previous[metric.key])} · `;
+      detail.appendChild(previousText);
+      const deltaLabel = deltaText(metric.key, d);
+      const deltaTextEl = document.createElement("span");
+      deltaTextEl.textContent = deltaLabel === t("No change", "変化なし") ? deltaLabel : `${t("change", "変化")} ${deltaLabel}`;
+      detail.appendChild(deltaTextEl);
+      const deltaKind = deltaClass(metric.key, d.absolute);
+      if (deltaKind) deltaTextEl.classList.add(deltaKind);
+      if (metric.key === "rate") {
+        const summary = summarizeRuns(after);
+        const breakdown = document.createElement("div");
+        breakdown.className = "comparison-breakdown";
+        breakdown.textContent = t(`${summary.success} success · ${summary.failure} failure`, `${summary.success} 件成功 · ${summary.failure} 件失敗`);
+        card.appendChild(breakdown);
+      }
+      cards.appendChild(card);
+    }
+    element.appendChild(cards);
+    const runnerDetails = document.createElement("details");
+    runnerDetails.className = "comparison-help";
+    const previousRunner = collectValues(before, runnerDurationSec);
+    const currentRunner = collectValues(after, runnerDurationSec);
+    const previousDurations = collectValues(before, totalDurationSec);
+    const currentDurations = collectValues(after, totalDurationSec);
+    runnerDetails.innerHTML = `<summary>${t("Runner usage and averages", "Runner使用時間と平均値")}</summary>`;
+    const runnerText = document.createElement("p");
+    runnerText.textContent = t(
+      `Runner time total: ${formatDuration(sum(currentRunner))} ${selectedPeriod ? "selected" : "current"} / ${formatDuration(sum(previousRunner))} previous. Average run duration: ${formatDuration(currentDurations.length ? sum(currentDurations) / currentDurations.length : null)} ${selectedPeriod ? "selected" : "current"}.`,
+      `Runner使用時間の合計: ${selectedPeriod ? "選択期間" : "直近"} ${formatDuration(sum(currentRunner))} / 前期間 ${formatDuration(sum(previousRunner))}。平均実行時間: ${selectedPeriod ? "選択期間" : "直近"} ${formatDuration(currentDurations.length ? sum(currentDurations) / currentDurations.length : null)}。`);
+    runnerDetails.appendChild(runnerText);
+    element.appendChild(runnerDetails);
+
+    const jobHeading = document.createElement("div");
+    jobHeading.className = "comparison-job-heading";
+    const jobTitle = document.createElement("h4");
+    jobTitle.textContent = t("Job comparison", "Job 比較");
+    jobHeading.appendChild(jobTitle);
+    const comparisonMatrixLabel = document.createElement("label");
+    comparisonMatrixLabel.className = "matrix-control";
+    const comparisonMatrix = document.createElement("input");
+    comparisonMatrix.type = "checkbox";
+    comparisonMatrix.checked = groupMatrix;
+    comparisonMatrixLabel.append(comparisonMatrix, document.createTextNode(t("Aggregate matrix (max)", "matrix を集約 (max)")));
+    comparisonMatrix.addEventListener("change", () => {
+      setMatrixGrouping(comparisonMatrix.checked);
+      const master = document.getElementById("groupMatrixToggle");
+      if (master) { master.checked = comparisonMatrix.checked; master.dispatchEvent(new Event("change")); }
+    });
+    jobHeading.appendChild(comparisonMatrixLabel);
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", t("Job comparison metric", "Job 比較の指標"));
+    for (const metric of metrics) { const option = document.createElement("option"); option.value = metric.key; option.textContent = metric.label; select.appendChild(option); }
+    jobHeading.appendChild(select);
+    element.appendChild(jobHeading);
+    const wrap = document.createElement("div");
+    wrap.className = "comparison-table-wrap";
+    const table = document.createElement("table");
+    table.className = "comparison-table job-comparison-table";
+    const head = table.createTHead().insertRow();
+    for (const label of [t("Job", "Job"), t("Previous", "前期間"), selectedPeriod ? t("Selected", "選択期間") : t("Current", "直近"), t("Change", "変化")]) { const th = document.createElement("th"); th.scope = "col"; th.textContent = label; head.appendChild(th); }
+    const body = table.createTBody();
+    const jobRows = comparisonJobRows(before, after, groupMatrix);
+    const renderJobs = () => {
+      body.replaceChildren();
+      const key = select.value;
+      const sortedRows = jobRows.slice().sort((a, b) => {
+        const ad = comparisonDelta(a.previous.duration, a.current.duration).absolute;
+        const bd = comparisonDelta(b.previous.duration, b.current.duration).absolute;
+        const am = Number.isFinite(ad), bm = Number.isFinite(bd);
+        if (am !== bm) return am ? -1 : 1;
+        return am ? bd - ad : a.name.localeCompare(b.name);
+      });
+      for (const row of sortedRows) {
+        const tr = body.insertRow();
+        const nameCell = tr.insertCell();
+        nameCell.className = "job-name";
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = row.name;
+        details.appendChild(summary);
+        const detailText = document.createElement("div");
+        detailText.className = "job-detail";
+        detailText.textContent = `${t("duration", "所要時間")} ${valueText("duration", row.current.duration)} · ${t("rate", "成功率")} ${valueText("rate", row.current.rate)} · ${t("runs", "実行回数")} ${valueText("count", row.current.count)}`;
+        details.appendChild(detailText);
+        nameCell.appendChild(details);
+        tr.insertCell().textContent = valueText(key, row.previous[key]);
+        const currentCell = tr.insertCell();
+        currentCell.textContent = valueText(key, row.current[key]);
+        currentCell.dataset.previous = valueText(key, row.previous[key]);
+        const d = comparisonDelta(row.previous[key], row.current[key]);
+        const cell = tr.insertCell(); cell.className = deltaClass(key, d.absolute); cell.textContent = deltaText(key, d);
+      }
+    };
+    const JOB_COMPARE_METRIC_KEY = "ghtrack:jobCompareMetric";
+    select.value = ["duration", "rate", "count"].includes(lsGet(JOB_COMPARE_METRIC_KEY, "duration"))
+      ? lsGet(JOB_COMPARE_METRIC_KEY, "duration") : "duration";
+    select.addEventListener("change", () => { lsSet(JOB_COMPARE_METRIC_KEY, select.value); renderJobs(); }); renderJobs();
+    wrap.appendChild(table); element.appendChild(wrap);
+  }
+
   // preset / from / to から実際の数値範囲を返す。null は未指定。
   function getActiveRange() {
     const preset = lsGet(RANGE_PRESET_KEY, "30d");
@@ -573,6 +1067,31 @@
     return { from: null, to: null };
   }
 
+  // 選択中の期間から比較に使う日数を導く。「全期間」や未設定・不正な custom 期間は
+  // 比較対象の長さが定まらないため null(比較不可)を返す。
+  function compareDaysForPreset(preset, customFrom, customTo) {
+    if (preset === "7d") return 7;
+    if (preset === "30d") return 30;
+    if (preset === "90d") return 90;
+    if (preset === "custom") {
+      if (!customFrom || !customTo) return null;
+      const fromMs = new Date(customFrom + "T00:00:00").getTime();
+      const toExclusiveMs = new Date(customTo + "T00:00:00").getTime() + DAY_MS;
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toExclusiveMs)) return null;
+      const days = Math.round((toExclusiveMs - fromMs) / DAY_MS);
+      return days >= 1 ? days : null;
+    }
+    return null;
+  }
+
+  function activeCompareDays() {
+    return compareDaysForPreset(
+      lsGet(RANGE_PRESET_KEY, "30d"),
+      lsGet(RANGE_FROM_KEY, ""),
+      lsGet(RANGE_TO_KEY, ""),
+    );
+  }
+
   function filterByRange(entries, range) {
     if (range.from === null && range.to === null) return entries;
     return entries.filter((e) =>
@@ -581,6 +1100,9 @@
   }
 
   function chartOptions(tooltipExtra) {
+    const gridColor = cssVar("--border");
+    const tickColor = cssVar("--muted");
+    const titleColor = cssVar("--fg");
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -593,16 +1115,29 @@
             tooltipFormat: "yyyy-MM-dd HH:mm",
             displayFormats: { day: "yyyy-MM-dd" },
           },
-          title: { display: true, text: "Date" },
+          title: { display: true, text: "Date", color: titleColor },
+          grid: { color: gridColor },
+          ticks: { color: tickColor },
         },
         y: {
           beginAtZero: true,
-          title: { display: true, text: "Seconds" },
+          title: { display: true, text: "Seconds", color: titleColor },
+          grid: { color: gridColor },
+          ticks: { color: tickColor },
         },
       },
       plugins: {
-        legend: { display: true, position: "top" },
+        legend: {
+          display: true,
+          position: "top",
+          labels: { color: titleColor, boxWidth: 12, boxHeight: 12 },
+        },
         tooltip: {
+          backgroundColor: cssVar("--surface"),
+          borderColor: gridColor,
+          borderWidth: 1,
+          titleColor,
+          bodyColor: titleColor,
           callbacks: {
             afterBody(items) {
               if (!items || items.length === 0 || !tooltipExtra) return "";
@@ -766,8 +1301,8 @@
         position: "right",
         min: 0,
         max: 100,
-        title: { display: true, text: t("Success rate (%)", "成功率 (%)") },
-        ticks: { callback: (v) => v + "%" },
+        title: { display: true, text: t("Success rate (%)", "成功率 (%)"), color: cssVar("--fg") },
+        ticks: { color: cssVar("--muted"), callback: (v) => v + "%" },
         grid: { drawOnChartArea: false },
       };
     }
@@ -1187,7 +1722,7 @@
       ],
       WALL_CLOCK_TIP_HTML);
     appendStatCard(el,
-      t("Total execution time", "総実行時間"),
+      t("Total runner time", "Runner 使用時間の合計"),
       formatDuration(runnerSum),
       [
         t("all job durations summed (billing estimate)",
@@ -1276,9 +1811,20 @@
     const section = document.createElement("section");
     section.className = "source";
 
+    const heading = document.createElement("div");
+    heading.className = "source-heading";
+
     const title = document.createElement("h2");
     title.textContent = deriveSourceTitle(source);
-    section.appendChild(title);
+    heading.appendChild(title);
+
+    const actionsLink = document.createElement("a");
+    actionsLink.className = "actions-link";
+    actionsLink.textContent = t("Actions", "Actions");
+    actionsLink.target = "_blank";
+    actionsLink.rel = "noopener noreferrer";
+    actionsLink.hidden = true;
+    title.appendChild(actionsLink);
 
     const compactLine = document.createElement("span");
     compactLine.className = "compact-line";
@@ -1288,8 +1834,20 @@
     const meta = document.createElement("p");
     meta.className = "source-meta";
     meta.id = sourceMetaId;
-    section.appendChild(meta);
+    heading.appendChild(meta);
+    section.appendChild(heading);
     updateSourceMeta(source, meta);
+    const dataInfo = document.createElement("details");
+    dataInfo.className = "data-info";
+    const dataSummary = document.createElement("summary");
+    dataSummary.textContent = t("Data information", "データ情報");
+    dataInfo.appendChild(dataSummary);
+    const dataText = document.createElement("p");
+    dataText.id = `data-info-${idx}`;
+    dataText.className = "meta";
+    dataText.textContent = `${source.dir} · ${source.entries.length}/${source.totalRuns} ${t("runs loaded", "run 読み込み済み")}`;
+    dataInfo.appendChild(dataText);
+    section.appendChild(dataInfo);
 
     const summary = document.createElement("div");
     summary.className = "summary";
@@ -1301,7 +1859,26 @@
     stats.id = statsId;
     section.appendChild(stats);
 
+    const comparison = document.createElement("div");
+    comparison.hidden = true;
+    section.appendChild(comparison);
+
     const totalH3 = document.createElement("h3");
+    const chartControls = document.createElement("div");
+    chartControls.className = "chart-controls";
+    const bucketControl = document.createElement("label");
+    bucketControl.textContent = t("Aggregation:", "集計単位:");
+    const bucketSelect = document.createElement("select");
+    bucketSelect.className = "total-bucket-control";
+    for (const [value, label] of [["run", t("Per run", "Run ごと")], ["day", t("Daily (median)", "日毎 (中央値)")], ["week", t("Weekly (median)", "週ごと (中央値)")], ["month", t("Monthly (median)", "月ごと (中央値)")]]) { const o = document.createElement("option"); o.value = value; o.textContent = label; bucketSelect.appendChild(o); }
+    bucketControl.appendChild(bucketSelect); chartControls.appendChild(bucketControl);
+    const levelControl = document.createElement("label");
+    levelControl.textContent = t("Breakdown:", "内訳:");
+    const levelSelect = document.createElement("select"); levelSelect.className = "breakdown-control";
+    for (const [value, label] of [["jobs", t("Jobs", "Jobs")], ["steps", t("Steps", "Steps")]]) { const o = document.createElement("option"); o.value = value; o.textContent = label; levelSelect.appendChild(o); }
+    levelControl.appendChild(levelSelect); chartControls.appendChild(levelControl);
+    section.appendChild(chartControls);
+    totalH3.className = "chart-heading";
     totalH3.textContent = t("Run duration & total execution time",
       "Run ごとの所要時間・総実行時間");
     section.appendChild(totalH3);
@@ -1314,6 +1891,7 @@
     section.appendChild(totalWrap);
 
     const breakdownH3 = document.createElement("h3");
+    breakdownH3.className = "chart-heading";
     breakdownH3.textContent = t("Duration breakdown (cumulative)", "実行時間の内訳 (累積)");
     section.appendChild(breakdownH3);
 
@@ -1326,12 +1904,20 @@
 
     const breakdownMeta = document.createElement("p");
     breakdownMeta.className = "meta";
+    breakdownMeta.classList.add("chart-meta");
     breakdownMeta.id = breakdownMetaId;
     section.appendChild(breakdownMeta);
 
     const jobH3 = document.createElement("h3");
+    jobH3.className = "chart-heading";
     jobH3.textContent = t("Per-job duration", "Job ごとの実行時間");
     section.appendChild(jobH3);
+    const matrixControl = document.createElement("label");
+    matrixControl.className = "matrix-control";
+    const matrixCheckbox = document.createElement("input"); matrixCheckbox.type = "checkbox";
+    matrixControl.appendChild(matrixCheckbox);
+    matrixControl.appendChild(document.createTextNode(t("Aggregate matrix (max)", "matrix を集約 (max)")));
+    jobH3.appendChild(matrixControl);
 
     const jobWrap = document.createElement("div");
     jobWrap.className = "chart-wrap";
@@ -1342,8 +1928,12 @@
 
     const jobMeta = document.createElement("p");
     jobMeta.className = "meta";
+    jobMeta.classList.add("chart-meta");
     jobMeta.id = jobMetaId;
     section.appendChild(jobMeta);
+    bucketSelect.value = getTotalBucket();
+    levelSelect.value = getBreakdownLevel();
+    matrixCheckbox.checked = getMatrixGrouping();
 
     container.appendChild(section);
 
@@ -1351,6 +1941,7 @@
       source,
       sectionEl: section,
       compactLineId: compactLine.id,
+      comparison,
       totalCanvasId,
       jobCanvasId,
       jobMetaId,
@@ -1359,13 +1950,30 @@
       breakdownCanvasId,
       breakdownMetaId,
       sourceMetaId,
+      actionsLink,
+      matrixCheckbox,
+      bucketSelect,
+      levelSelect,
     };
   }
 
-  function updateSourceMeta(source, metaEl) {
-    const latest = source.entries.length > 0
-      ? new Date(source.entries[source.entries.length - 1].date).toLocaleString()
+  // entries がロードされて workflow_file が判明した時点で呼ぶ。owner/repo が
+  // 推測できない、または entries が空の場合はリンクを隠したままにする。
+  function updateActionsLink(source, linkEl) {
+    const workflowFile = source.entries.length > 0
+      ? source.entries[source.entries.length - 1].workflow_file
       : null;
+    const url = buildActionsUrl(workflowFile);
+    if (!url) {
+      linkEl.hidden = true;
+      return;
+    }
+    linkEl.href = url;
+    linkEl.hidden = false;
+  }
+
+  function updateSourceMeta(source, metaEl) {
+    const latest = source.lastRunDay || null;
     const totalRuns = typeof source.totalRuns === "number"
       ? source.totalRuns
       : source.entries.length;
@@ -1373,9 +1981,9 @@
     const countText = loaded === totalRuns
       ? `${loaded} run(s)`
       : `${loaded}/${totalRuns} run(s) loaded`;
-    metaEl.textContent =
-      `${source.dir} · ${countText}` +
-      (latest ? ` (latest: ${latest})` : "");
+    metaEl.textContent = latest
+      ? t(`Latest run: ${latest}`, `最終実行: ${latest}`)
+      : t("No runs loaded", "実行データなし");
   }
 
   function fetchJson(path) {
@@ -1507,11 +2115,19 @@
         return renderSourceSection(source, i, container);
       });
 
+      let activeComparison = null;
+      let activeRange = getActiveRange();
+      let loadVersion = 0;
+      const compareToggle = document.getElementById("compareToggle");
+      const compareStatus = document.getElementById("compareStatus");
+      const comparePeriod = document.getElementById("comparePeriod");
+      compareToggle.checked = lsGet("ghtrack:compare", "false") === "true";
+
       const renderAllCharts = () => {
         const groupMatrix = getMatrixGrouping();
         const level = getBreakdownLevel();
         const bucket = getTotalBucket();
-        const range = getActiveRange();
+        const range = activeRange;
         const hasFilter = range.from !== null || range.to !== null;
         const emptyMsg = hasFilter
           ? t("No runs in selected range.", "選択した期間に該当する run がありません。")
@@ -1521,11 +2137,17 @@
         let inactiveCount = 0;
         for (const target of chartTargets) {
           const filtered = filterByRange(target.source.entries, range);
+          target.sectionEl.classList.toggle("comparison-enabled", !!activeComparison);
 
           // 期間内に run が 1 件もない source はチャートを描かず、
           // 下部の inactive グループへ 1 行表示で folding する。
           // appendChild は元 node の移動なので、chartTargets の順序が保たれる。
-          if (filtered.length === 0) {
+          const previousFiltered = activeComparison
+            ? filterByRange(target.source.entries, activeComparison.previous)
+            : [];
+          target.sectionEl.classList.toggle("comparison-only", filtered.length === 0 && previousFiltered.length > 0);
+          // 直近が 0 件でも前期間に実行があれば比較を残す。
+          if (filtered.length === 0 && previousFiltered.length === 0) {
             target.sectionEl.classList.add("compact");
             const cl = document.getElementById(target.compactLineId);
             if (cl) {
@@ -1546,11 +2168,15 @@
           activeContainer.appendChild(target.sectionEl);
           renderSummary(filtered, target.summaryId, hasFilter);
           renderStats(filtered, target.statsId);
+          renderComparison(target.source.entries, target.comparison, activeComparison, groupMatrix, target.comparisonIncomplete);
           buildTotalChart(filtered, target.totalCanvasId, bucket, emptyMsg);
           buildBreakdownChart(filtered, target.breakdownCanvasId, target.breakdownMetaId, level, groupMatrix, bucket, emptyMsg);
           buildJobChart(filtered, target.jobCanvasId, target.jobMetaId, groupMatrix, emptyMsg);
-          const metaEl = document.getElementById(target.sourceMetaId);
-          updateSourceMeta(target.source, metaEl);
+      const metaEl = document.getElementById(target.sourceMetaId);
+      updateSourceMeta(target.source, metaEl);
+          const dataInfoEl = document.getElementById(`data-info-${chartTargets.indexOf(target)}`);
+          if (dataInfoEl) dataInfoEl.textContent = `${target.source.dir} · ${target.source.entries.length}/${target.source.totalRuns} ${t("runs loaded", "run 読み込み済み")}`;
+          updateActionsLink(target.source, target.actionsLink);
         }
 
         const inactiveWrap = document.getElementById("inactiveSources");
@@ -1563,30 +2189,101 @@
         }
       };
 
-      const loadEntriesForCurrentRange = () => {
+      // renderAllCharts はこのスコープで定義されるため、workflow別コントロールの
+      // listener は生成時ではなく、定義後に束縛する。
+      for (const target of chartTargets) {
+        target.bucketSelect.addEventListener("change", () => {
+          lsSet(TOTAL_BUCKET_KEY, target.bucketSelect.value);
+          document.querySelectorAll(".total-bucket-control").forEach((el) => { el.value = target.bucketSelect.value; });
+          renderAllCharts();
+        });
+        target.levelSelect.addEventListener("change", () => {
+          lsSet(BREAKDOWN_LEVEL_KEY, target.levelSelect.value);
+          document.querySelectorAll(".breakdown-control").forEach((el) => { el.value = target.levelSelect.value; });
+          renderAllCharts();
+        });
+        target.matrixCheckbox.addEventListener("change", () => {
+          setMatrixGrouping(target.matrixCheckbox.checked);
+          document.querySelectorAll(".matrix-control input").forEach((el) => { el.checked = target.matrixCheckbox.checked; });
+          const master = document.getElementById("groupMatrixToggle");
+          if (master) master.checked = target.matrixCheckbox.checked;
+          renderAllCharts();
+        });
+      }
+
+      const reloadAndRender = async () => {
+        const version = ++loadVersion;
         const range = getActiveRange();
-        return Promise.all(
-          chartTargets.map((target) => {
-            const wfRunsToFetch = runsInRange(target.source.runs, range);
-            return fetchRunsWithCache(target.source, wfRunsToFetch, cache).then(
-              (entries) => {
-                target.source.entries = entries
-                  .slice()
-                  .sort((a, b) => a.date - b.date);
-              },
-            );
-          }),
-        );
+        // 比較の日数は期間セレクタから自動で決まる。「全期間」や未設定/不正な
+        // custom 期間では比較対象の長さが定まらないため、チェックボックス自体を
+        // 触れなくする(保存済みの有効・無効設定は変更しない)。
+        const days = activeCompareDays();
+        compareToggle.disabled = days === null;
+        const ranges = compareToggle.checked && days !== null
+          ? comparisonRangesForSelection(
+            lsGet(RANGE_PRESET_KEY, "30d"),
+            lsGet(RANGE_FROM_KEY, ""),
+            lsGet(RANGE_TO_KEY, ""),
+            Date.now(),
+          )
+          : null;
+        compareStatus.textContent = !compareToggle.checked ? ""
+          : days === null ? t("Comparison isn't available for \"All time\" or an incomplete custom range.",
+              "「全期間」または未設定のカスタム期間では比較できません。")
+          : t("Loading comparison…", "比較データを読み込み中…");
+        activeComparison = null;
+        if (comparePeriod) { comparePeriod.hidden = true; comparePeriod.textContent = ""; }
+        const comparePeriodDetails = document.getElementById("comparePeriodDetails");
+        if (comparePeriodDetails) { comparePeriodDetails.hidden = true; comparePeriodDetails.replaceChildren(); }
+        for (const target of chartTargets) target.comparison.hidden = true;
+        const fetchRange = ranges ? {
+          from: range.from === null ? ranges.previous.from : Math.min(range.from, ranges.previous.from),
+          to: range.to === null ? ranges.current.to : Math.max(range.to, ranges.current.to),
+        } : range;
+        const results = await Promise.all(chartTargets.map(async (target) => {
+          const runs = runsInRange(target.source.runs, fetchRange);
+          const entries = await fetchRunsWithCache(target.source, runs, cache);
+          return { entries: entries.slice().sort((a, b) => a.date - b.date), incomplete: entries.length !== runs.length };
+        }));
+        // 遅れて完了した古いリクエストで、新しい選択の表示を上書きしない。
+        if (version !== loadVersion) return;
+        chartTargets.forEach((target, index) => {
+          target.source.entries = results[index].entries;
+          target.comparisonIncomplete = comparisonRunsIncomplete(
+            target.source.runs, ranges, cache, target.source.track_name);
+        });
+        activeRange = range;
+        activeComparison = ranges;
+        if (ranges) {
+          compareStatus.textContent = "";
+          if (comparePeriod) {
+            const date = (r) => `${new Date(r.from).toLocaleDateString()} – ${new Date(r.to).toLocaleDateString()}`;
+            const currentLabel = lsGet(RANGE_PRESET_KEY, "30d") === "custom" ? t("Selected", "選択期間") : t("Current", "直近");
+            comparePeriod.textContent = t(`Comparison: ${date(ranges.previous)} / ${currentLabel}: ${date(ranges.current)}`,
+              `比較期間: 前 ${date(ranges.previous)} / ${currentLabel}: ${date(ranges.current)}`);
+            comparePeriod.hidden = false;
+            if (comparePeriodDetails) {
+              const summary = document.createElement("summary"); summary.textContent = t("Exact comparison timestamps", "比較期間の正確な日時");
+              const detail = document.createElement("p");
+              detail.textContent = `${new Date(ranges.previous.from).toLocaleString()} – ${new Date(ranges.previous.to).toLocaleString()} / ${new Date(ranges.current.from).toLocaleString()} – ${new Date(ranges.current.to).toLocaleString()}`;
+              comparePeriodDetails.append(summary, detail); comparePeriodDetails.hidden = false;
+            }
+          }
+        }
+        renderAllCharts();
       };
 
-      const reloadAndRender = () =>
-        loadEntriesForCurrentRange().then(renderAllCharts);
+      compareToggle.addEventListener("change", () => {
+        lsSet("ghtrack:compare", String(compareToggle.checked));
+        reloadAndRender();
+      });
 
       const toggle = document.getElementById("groupMatrixToggle");
       if (toggle) {
         toggle.checked = getMatrixGrouping();
         toggle.addEventListener("change", () => {
           setMatrixGrouping(toggle.checked);
+          document.querySelectorAll(".matrix-control input").forEach((el) => { el.checked = toggle.checked; });
           renderAllCharts();
         });
       }
@@ -1596,6 +2293,7 @@
         breakdownSelect.value = getBreakdownLevel();
         breakdownSelect.addEventListener("change", () => {
           lsSet(BREAKDOWN_LEVEL_KEY, breakdownSelect.value);
+          document.querySelectorAll(".breakdown-control").forEach((el) => { el.value = breakdownSelect.value; });
           renderAllCharts();
         });
       }
@@ -1605,6 +2303,7 @@
         totalBucketSelect.value = getTotalBucket();
         totalBucketSelect.addEventListener("change", () => {
           lsSet(TOTAL_BUCKET_KEY, totalBucketSelect.value);
+          document.querySelectorAll(".total-bucket-control").forEach((el) => { el.value = totalBucketSelect.value; });
           renderAllCharts();
         });
       }

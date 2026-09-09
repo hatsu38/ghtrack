@@ -5,6 +5,7 @@
   "description": "Track GitHub Actions workflow run durations over time on gh-pages.",
   "main": "dist/index.js",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
     "typecheck": "tsc --noEmit"
   },
